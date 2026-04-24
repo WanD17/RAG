@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 512
     CHUNK_OVERLAP: int = 50
 
+    RERANKER_ENABLED: bool = True
+    RERANKER_MODEL: str = "BAAI/bge-reranker-base"
+    RETRIEVAL_TOP_N: int = 20
+
     CORS_ORIGINS: List[str] = ["http://localhost:5173"]
     UPLOAD_DIR: str = "./uploads"
 

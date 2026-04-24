@@ -8,6 +8,7 @@ from src.auth.router import router as auth_router
 from src.config import settings
 from src.documents.router import router as documents_router
 from src.embeddings.service import embedding_service
+from src.rag.reranker import reranker_service
 from src.rag.router import router as rag_router
 
 
@@ -15,6 +16,9 @@ from src.rag.router import router as rag_router
 async def lifespan(app: FastAPI):
     logger.info("Starting up: loading embedding model...")
     embedding_service.load()
+    if settings.RERANKER_ENABLED:
+        logger.info("Loading reranker model...")
+        reranker_service.load()
     logger.info("Application ready")
     yield
     logger.info("Shutting down")

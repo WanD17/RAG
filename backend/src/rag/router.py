@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncGenerator
@@ -10,12 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth import service as auth_service
 from src.auth.models import User
+from src.config import settings
 from src.dependencies import get_current_user
 from src.db.session import get_db
 from src.embeddings.service import embedding_service
 from src.rag import retriever
 from src.rag import generator as gen
 from src.rag import service
+from src.rag.reranker import reranker_service
 from src.rag.schemas import QueryRequest, QueryResponse
 
 router = APIRouter(prefix="/rag", tags=["rag"])
@@ -65,7 +68,16 @@ async def query_knowledge_base_stream(
     current_user = await _user_from_query_token(token, db)
 
     query_embedding = embedding_service.embed_text(question)
-    chunks = await retriever.retrieve(db, query_embedding, top_k=top_k, user_id=current_user.id)
+    retrieval_n = max(settings.RETRIEVAL_TOP_N, top_k) if settings.RERANKER_ENABLED else top_k
+    candidates = await retriever.retrieve(
+        db, query_embedding, top_k=retrieval_n, user_id=current_user.id
+    )
+    if settings.RERANKER_ENABLED and candidates:
+        chunks = await asyncio.to_thread(
+            reranker_service.rerank, question, candidates, top_k
+        )
+    else:
+        chunks = candidates[:top_k]
 
     async def event_stream() -> AsyncGenerator[str, None]:
         try:
