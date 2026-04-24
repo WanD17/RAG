@@ -1,6 +1,6 @@
 # Codebase Summary
 
-**Last Updated:** 2026-04-21 | **Project Version:** 0.1.0
+**Last Updated:** 2026-04-24 | **Project Version:** 0.1.0
 
 ## Overview
 
@@ -206,7 +206,7 @@ CREATE INDEX ix_document_chunks_embedding ON document_chunks
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | **db** | pgvector/pgvector:pg16 | 5432 | PostgreSQL + pgvector |
-| **pgadmin** | dpage/pgadmin4:latest | 5050 | DB admin UI (optional) |
+| **pgadmin** | dpage/pgadmin4:latest | 5050 | DB admin UI (included by default) |
 | **ollama** | ollama/ollama:latest | 11434 | LLM inference engine |
 | **backend** | custom (FastAPI) | 8000 | API server |
 | **frontend** | custom (Nginx) | 3000 | SPA server |
