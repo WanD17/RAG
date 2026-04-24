@@ -30,8 +30,11 @@ async def query_knowledge_base(
     try:
         return await service.query(db, payload.query, current_user.id, payload.top_k)
     except Exception as e:
-        logger.error(f"RAG query failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Query failed")
+        logger.exception("RAG query failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{type(e).__name__}: {e}",
+        )
 
 
 async def _user_from_query_token(token: str, db: AsyncSession) -> User:

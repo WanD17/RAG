@@ -34,7 +34,7 @@ async def generate_answer(query: str, context_chunks: list[ChunkResult]) -> str:
     messages = _build_messages(query, context_chunks)
 
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{settings.OLLAMA_BASE_URL}/api/chat",
                 json={
@@ -42,7 +42,7 @@ async def generate_answer(query: str, context_chunks: list[ChunkResult]) -> str:
                     "messages": messages,
                     "stream": False,
                     "think": False,
-                    "options": {"num_predict": 1024, "num_ctx": 8192, "temperature": 0.1},
+                    "options": {"num_predict": 512, "num_ctx": 4096, "temperature": 0.1},
                 },
             )
             response.raise_for_status()

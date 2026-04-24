@@ -23,7 +23,8 @@ dist/
 Thumbs.db
 
 # Uploads
-uploads/*
+uploads/
+
 !uploads/.gitkeep
 
 # Build
@@ -36,3 +37,15 @@ uploads/*
 plans/*
 
 rag-system-guide.md
+
+RAG_compare.md
+
+RAG_comparison_report.md
+
+RAG_deep_analysis.md
+
+law_docs/
+
+scripts/
+
+*.json
