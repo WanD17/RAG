@@ -11,6 +11,7 @@ from src.documents.chunker import chunk_text
 from src.documents.models import Document, DocumentChunk
 from src.documents.parser import parse_file
 from src.embeddings.service import embedding_service
+from src.rag.qdrant import qdrant_service
 
 ALLOWED_TYPES = {"pdf", "docx", "txt", "md"}
 
@@ -69,22 +70,42 @@ async def process_document(db: AsyncSession, document_id: uuid.UUID) -> None:
 
         embeddings = embedding_service.embed_texts(chunks)
 
+        chunk_ids = [uuid.uuid4() for _ in chunks]
         chunk_records = [
             DocumentChunk(
+                id=chunk_ids[idx],
                 document_id=document.id,
                 content=chunk,
                 chunk_index=idx,
-                embedding=emb,
-                metadata_={"filename": document.filename, "chunk_index": idx, "total_chunks": len(chunks)},
+                metadata_={
+                    "filename": document.filename,
+                    "chunk_index": idx,
+                    "total_chunks": len(chunks),
+                },
             )
-            for idx, (chunk, emb) in enumerate(zip(chunks, embeddings))
+            for idx, chunk in enumerate(chunks)
         ]
 
         db.add_all(chunk_records)
         document.chunk_count = len(chunks)
         document.status = "completed"
         await db.commit()
-        logger.info(f"Document {document_id} processed: {len(chunks)} chunks")
+
+        payloads = [
+            {
+                "user_id": str(document.user_id),
+                "document_id": str(document.id),
+                "filename": document.filename,
+                "chunk_index": idx,
+                "content": chunk,
+            }
+            for idx, chunk in enumerate(chunks)
+        ]
+        await qdrant_service.upsert_chunks(chunk_ids, embeddings, payloads)
+        logger.info(
+            f"Document {document_id} processed: {len(chunks)} chunks "
+            f"(Postgres + Qdrant)"
+        )
 
     except Exception as e:
         logger.error(f"Failed to process document {document_id}: {e}")
@@ -117,4 +138,5 @@ async def delete_document(db: AsyncSession, document_id: uuid.UUID, user_id: uui
 
     await db.delete(document)
     await db.commit()
+    await qdrant_service.delete_by_document(document_id)
     return True

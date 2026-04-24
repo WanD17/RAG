@@ -8,6 +8,7 @@ from src.auth.router import router as auth_router
 from src.config import settings
 from src.documents.router import router as documents_router
 from src.embeddings.service import embedding_service
+from src.rag.qdrant import qdrant_service
 from src.rag.reranker import reranker_service
 from src.rag.router import router as rag_router
 
@@ -19,9 +20,12 @@ async def lifespan(app: FastAPI):
     if settings.RERANKER_ENABLED:
         logger.info("Loading reranker model...")
         reranker_service.load()
+    logger.info("Initializing Qdrant collection...")
+    await qdrant_service.ensure_collection()
     logger.info("Application ready")
     yield
     logger.info("Shutting down")
+    await qdrant_service.close()
 
 
 app = FastAPI(

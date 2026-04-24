@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import uuid
+
+from loguru import logger
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PayloadSchemaType,
+    PointStruct,
+    VectorParams,
+)
+
+from src.config import settings
+
+
+class QdrantService:
+    _instance: QdrantService | None = None
+    _client: AsyncQdrantClient | None = None
+
+    def __new__(cls) -> QdrantService:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    @property
+    def client(self) -> AsyncQdrantClient:
+        if self._client is None:
+            self._client = AsyncQdrantClient(url=settings.QDRANT_URL)
+        return self._client
+
+    async def ensure_collection(self) -> None:
+        exists = await self.client.collection_exists(settings.QDRANT_COLLECTION)
+        if exists:
+            logger.debug(f"Qdrant collection '{settings.QDRANT_COLLECTION}' already exists")
+            return
+
+        logger.info(
+            f"Creating Qdrant collection '{settings.QDRANT_COLLECTION}' "
+            f"(dim={settings.EMBEDDING_DIM}, distance=COSINE)"
+        )
+        await self.client.create_collection(
+            collection_name=settings.QDRANT_COLLECTION,
+            vectors_config=VectorParams(
+                size=settings.EMBEDDING_DIM,
+                distance=Distance.COSINE,
+            ),
+        )
+        await self.client.create_payload_index(
+            collection_name=settings.QDRANT_COLLECTION,
+            field_name="user_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+        await self.client.create_payload_index(
+            collection_name=settings.QDRANT_COLLECTION,
+            field_name="document_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+
+    async def upsert_chunks(
+        self,
+        chunk_ids: list[uuid.UUID],
+        embeddings: list[list[float]],
+        payloads: list[dict],
+    ) -> None:
+        if not chunk_ids:
+            return
+        points = [
+            PointStruct(id=str(cid), vector=emb, payload=pl)
+            for cid, emb, pl in zip(chunk_ids, embeddings, payloads, strict=True)
+        ]
+        await self.client.upsert(
+            collection_name=settings.QDRANT_COLLECTION,
+            points=points,
+            wait=True,
+        )
+
+    async def search(
+        self,
+        query_vector: list[float],
+        user_id: uuid.UUID,
+        top_k: int,
+    ) -> list[dict]:
+        result = await self.client.query_points(
+            collection_name=settings.QDRANT_COLLECTION,
+            query=query_vector,
+            query_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="user_id",
+                        match=MatchValue(value=str(user_id)),
+                    )
+                ],
+            ),
+            limit=top_k,
+            with_payload=True,
+        )
+        return [
+            {"id": p.id, "score": p.score, "payload": p.payload or {}}
+            for p in result.points
+        ]
+
+    async def delete_by_document(self, document_id: uuid.UUID) -> None:
+        await self.client.delete(
+            collection_name=settings.QDRANT_COLLECTION,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="document_id",
+                        match=MatchValue(value=str(document_id)),
+                    )
+                ],
+            ),
+            wait=True,
+        )
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
+
+qdrant_service = QdrantService()

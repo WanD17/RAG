@@ -69,9 +69,16 @@ async def query_knowledge_base_stream(
 
     query_embedding = embedding_service.embed_text(question)
     retrieval_n = max(settings.RETRIEVAL_TOP_N, top_k) if settings.RERANKER_ENABLED else top_k
-    candidates = await retriever.retrieve(
-        db, query_embedding, top_k=retrieval_n, user_id=current_user.id
-    )
+
+    if settings.HYBRID_ENABLED:
+        candidates = await service._hybrid_candidates(
+            db, question, query_embedding, retrieval_n, current_user.id
+        )
+    else:
+        candidates = await retriever.retrieve(
+            query_embedding, top_k=retrieval_n, user_id=current_user.id
+        )
+
     if settings.RERANKER_ENABLED and candidates:
         chunks = await asyncio.to_thread(
             reranker_service.rerank, question, candidates, top_k
