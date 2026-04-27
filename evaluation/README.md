@@ -145,12 +145,10 @@ docker compose restart backend
 python evaluation/run_eval.py --tag after-reranker
 
 # Update benchmark log
-python evaluation/update_benchmark.py --note "added bge-reranker-base"
+python evaluation/update_benchmark.py --note "bm25+qdrant+propmt_eng+reranker" "added bge-reranker-base"
 
 # Compare 2 runs side-by-side
-python evaluation/compare.py \
-  evaluation/results/20260423-140000-baseline.json \
-  evaluation/results/20260424-100000-after-reranker.json
+python evaluation/compare.py evaluation/results/20260423-162643-baseline.json evaluation/results/20260427-165613-bm25+qdrant+propmt_eng+reranker.json
 ```
 
 `compare.py` output bảng delta + flag `✗ WORSE !!` cho regression > threshold (3% pct, 0.03 scalar, 15% latency).

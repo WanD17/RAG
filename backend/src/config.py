@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     HYBRID_ENABLED: bool = True
     HYBRID_ALPHA: float = 0.7
     HYBRID_RRF_K: int = 60
+    HYBRID_SCORE_MULTIPLIER: float = 0.2  # min_score = top_score * multiplier (hybrid mode)
+    RETRIEVAL_SCORE_THRESHOLD: float = 0.3  # absolute min_score for non-hybrid mode
 
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION: str = "chunks"
