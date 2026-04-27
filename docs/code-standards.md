@@ -1,6 +1,6 @@
 # Code Standards & Conventions
 
-**Last Updated:** 2026-04-21
+**Last Updated:** 2026-04-27
 
 ## General Principles
 

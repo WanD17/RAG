@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -69,6 +70,7 @@ async def process_document(db: AsyncSession, document_id: uuid.UUID) -> None:
             raise ValueError("No content extracted from document")
 
         embeddings = embedding_service.embed_texts(chunks)
+        sparse_vectors = await asyncio.to_thread(qdrant_service.encode_bm25, chunks)
 
         chunk_ids = [uuid.uuid4() for _ in chunks]
         chunk_records = [
@@ -101,7 +103,7 @@ async def process_document(db: AsyncSession, document_id: uuid.UUID) -> None:
             }
             for idx, chunk in enumerate(chunks)
         ]
-        await qdrant_service.upsert_chunks(chunk_ids, embeddings, payloads)
+        await qdrant_service.upsert_chunks(chunk_ids, embeddings, sparse_vectors, payloads)
         logger.info(
             f"Document {document_id} processed: {len(chunks)} chunks "
             f"(Postgres + Qdrant)"

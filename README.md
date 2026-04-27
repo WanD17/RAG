@@ -1,18 +1,19 @@
 # RAG Internal Knowledge
 
-Hệ thống RAG (Retrieval-Augmented Generation) cho thông tin nội bộ. Upload tài liệu (PDF, DOCX, TXT, MD), tự động xử lý & lưu trữ vector embeddings, trả lời câu hỏi dựa trên nội dung tài liệu. Hoàn toàn self-hosted, không phụ thuộc API bên ngoài.
+Self-hosted retrieval-augmented generation system for internal knowledge. Upload documents (PDF, DOCX, TXT, MD), auto-process with embeddings, query via natural language with source citations. Fully self-hosted with zero external API dependencies.
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
-| Backend | Python 3.11, FastAPI 0.111.0, SQLAlchemy 2.0.30 |
-| Vector DB | PostgreSQL 16 + pgvector 0.3.0 |
-| Embeddings | sentence-transformers 3.0 (all-MiniLM-L6-v2, 384 dims) |
+| Backend | Python 3.11 + FastAPI + SQLAlchemy 2.0 async |
+| Vector DB | Qdrant (dense embeddings) + PostgreSQL 16 (FTS) |
+| Embeddings | sentence-transformers/all-MiniLM-L6-v2 (384 dims) |
+| Retrieval | Hybrid search (Qdrant cosine + Postgres FTS), RRF fusion, cross-encoder reranking (BAAI/bge-reranker-base) |
 | LLM | Ollama + Qwen3 8B (self-hosted, configurable) |
-| Frontend | React 19.2.4, TypeScript 5.9.3, Vite 5.4.21, Tailwind CSS 4.2.2 |
-| Auth | JWT HS256 (24h expiry, bcrypt hashing) |
-| Container | Docker Compose (4 services) |
+| Frontend | React 19 + TypeScript + Vite + Tailwind CSS |
+| Auth | JWT HS256 (24h expiry, bcrypt) |
+| Container | Docker Compose (6 services) |
 
 ## Quick Start
 
@@ -23,9 +24,9 @@ Hệ thống RAG (Retrieval-Augmented Generation) cho thông tin nội bộ. Upl
 git clone <repo-url>
 cd <project-folder>
 cp backend/.env.example backend/.env
-# Edit backend/.env: set SECRET_KEY
+# Edit backend/.env: set SECRET_KEY, QDRANT_URL, HYBRID_ENABLED, RERANKER_ENABLED
 
-# Start all services
+# Start all services (db, pgadmin, ollama, qdrant, backend, frontend)
 docker compose up -d
 
 # Pull LLM model (first time only, ~5GB)
@@ -34,6 +35,8 @@ docker compose exec ollama ollama pull qwen3:8b
 # Access
 # Frontend: http://localhost:3000
 # API Docs: http://localhost:8000/docs
+# Qdrant Dashboard: http://localhost:6333/dashboard
+# PgAdmin: http://localhost:5050
 ```
 
 ### Local Development
@@ -46,18 +49,30 @@ See [docs/deployment-guide.md](./docs/deployment-guide.md) for detailed setup in
 [React Frontend]  -->  [FastAPI Backend]
     (Port 3000)          (Port 8000)
                              |
-                [Document Pipeline]
-                - Parse & chunk
-                - Embed (sentence-transformers)
-                - Store (pgvector)
+           [Document Pipeline]
+           - Parse & chunk (tiktoken cl100k_base, 512 tokens, 50 overlap)
+           - Embed (sentence-transformers all-MiniLM-L6-v2, 384-dim)
+           - Store (Qdrant + Postgres FTS)
                              |
-                    [RAG Engine]
-                    - Vector search
-                    - Ollama generation
-                    - SSE streaming
+      [RAG Engine - Hybrid Search]
+      - Qdrant cosine similarity (dense vectors)
+      - Postgres FTS (ts_rank_cd, GIN index)
+      - RRF fusion (alpha=0.7, k=60)
+      - Cross-encoder reranking (BAAI/bge-reranker-base)
+      - Ollama generation (Qwen3 8B, SSE streaming)
                              |
-             [PostgreSQL 16 + pgvector]
+       [Qdrant (Port 6333)]    [PostgreSQL 16 + FTS]
+          (Dense vectors)          (Full-text search)
 ```
+
+## Key Features
+
+- **Hybrid Search** — Combine dense (Qdrant) + sparse (Postgres FTS) retrieval with RRF fusion
+- **Cross-encoder Reranking** — Improve answer quality with BAAI/bge-reranker-base
+- **Streaming Responses** — Real-time SSE streaming for instant user feedback
+- **Full Document Isolation** — Per-user document scoping at retrieval layer
+- **Evaluation Framework** — Golden set of 60 Q&A pairs for accuracy benchmarking
+- **Anti-hallucination System Prompt** — Grounding, citations, refusal handling, language mirroring
 
 ## API Endpoints
 
@@ -65,12 +80,12 @@ See [docs/deployment-guide.md](./docs/deployment-guide.md) for detailed setup in
 |--------|------|-------------|
 | POST | /auth/register | Register new user |
 | POST | /auth/login | Login, get JWT token |
-| POST | /documents/upload | Upload document (multipart) |
+| POST | /documents/upload | Upload document (multipart), trigger async processing |
 | GET | /documents | List user's documents |
-| GET | /documents/{id} | Document detail |
-| DELETE | /documents/{id} | Delete document |
-| POST | /rag/query | Query RAG (full response) |
-| GET | /rag/query-stream | Query RAG (SSE streaming) |
+| GET | /documents/{id} | Document detail + status |
+| DELETE | /documents/{id} | Delete document and chunks |
+| POST | /rag/query | Query with hybrid search (full response) |
+| GET | /rag/query-stream | Query with hybrid search (SSE streaming) |
 | GET | /health | Health check |
 
 ## Project Structure
@@ -109,17 +124,31 @@ See [docs/deployment-guide.md](./docs/deployment-guide.md) for detailed setup in
 ## Development
 
 ```bash
-# Backend
-cd backend && poetry install && poetry run uvicorn src.main:app --reload
+# Backend (with async support)
+cd backend && poetry install
+poetry run alembic upgrade head
+poetry run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend
 cd frontend && npm install && npm run dev
 
 # Tests
-cd backend && poetry run pytest
+cd backend && poetry run pytest --cov=src
 
 # Lint
 cd backend && poetry run ruff check src/
+cd frontend && npm run lint
+```
+
+## Evaluation
+
+```bash
+# Run benchmark against golden set
+cd backend
+poetry run python scripts/run_eval.py --tag v0.1.0
+
+# Compare results
+python scripts/compare.py
 ```
 
 ## License

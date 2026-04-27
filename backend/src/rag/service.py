@@ -13,15 +13,14 @@ from src.rag.schemas import QueryResponse, SourceChunk
 
 
 async def _hybrid_candidates(
-    db: AsyncSession,
     query_text: str,
     query_embedding: list[float],
     top_n: int,
     user_id: uuid.UUID,
 ) -> list[retriever.ChunkResult]:
-    """Run dense (Qdrant) + sparse (Postgres FTS) retrieval concurrently and fuse via RRF."""
+    """Run dense (Qdrant HNSW) + sparse (Qdrant BM25) retrieval concurrently and fuse via RRF."""
     dense_task = retriever.retrieve(query_embedding, top_k=top_n, user_id=user_id)
-    sparse_task = retriever.retrieve_sparse(db, query_text, top_k=top_n, user_id=user_id)
+    sparse_task = retriever.retrieve_bm25(query_text, top_k=top_n, user_id=user_id)
     dense, sparse = await asyncio.gather(dense_task, sparse_task)
     logger.debug(f"Hybrid retrieval: dense={len(dense)}, sparse={len(sparse)}")
     return reciprocal_rank_fusion(
@@ -49,7 +48,7 @@ async def query(
 
     if settings.HYBRID_ENABLED:
         candidates = await _hybrid_candidates(
-            db, query_text, query_embedding, retrieval_n, user_id
+            query_text, query_embedding, retrieval_n, user_id
         )
     else:
         candidates = await retriever.retrieve(

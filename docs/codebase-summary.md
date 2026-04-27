@@ -1,12 +1,12 @@
 # Codebase Summary
 
-**Last Updated:** 2026-04-24 | **Project Version:** 0.1.0
+**Last Updated:** 2026-04-27 | **Project Version:** 0.1.0
 
 ## Overview
 
-RAG Internal Knowledge is a monorepo containing a FastAPI backend (Python) and React frontend (TypeScript), with supporting Docker Compose orchestration for PostgreSQL, pgvector, and Ollama services.
+RAG Internal Knowledge is a monorepo containing a FastAPI backend (Python) and React frontend (TypeScript), with Docker Compose orchestration for PostgreSQL, Qdrant, pgadmin, Ollama, and Nginx services.
 
-**Total Files:** 90 | **Total Tokens (code):** ~48k | **Deployable Units:** 2 (backend, frontend)
+**Backend Code:** ~1,676 LOC | **Frontend Code:** ~1,290 LOC | **Total Tokens:** ~48k | **Deployable Units:** 2 (backend, frontend)
 
 ## Backend (`/backend`)
 
@@ -16,11 +16,11 @@ RAG Internal Knowledge is a monorepo containing a FastAPI backend (Python) and R
 
 | Module | Files | Purpose | Key Classes/Functions |
 |--------|-------|---------|----------------------|
-| **auth** | 4 files | User authentication & JWT | `User` (model), `register()`, `login()`, JWT service |
-| **documents** | 5 files | Document upload & processing pipeline | `Document`, `DocumentChunk` (models), `upload()`, `process()`, parsers (PDF/DOCX/TXT/MD), chunker |
-| **embeddings** | 1 file | Vector embeddings service (singleton) | `EmbeddingService`, `embed_text()`, `embed_texts()` (batch) |
-| **rag** | 5 files | RAG query engine | `retrieve()` (pgvector cosine), `generate_answer()` (Ollama), streaming support |
-| **db** | 2 files | Database layer | `Base`, `BaseModel` (UUID + timestamps), async session management |
+| **auth** | 4 files | User authentication & JWT (HS256, 24h) | `User` (model), `register()`, `login()`, `get_current_user()` |
+| **documents** | 5 files | Upload, parse, chunk, embed pipeline | `Document`, `DocumentChunk` (models), `upload()`, background task processing |
+| **embeddings** | 1 file | sentence-transformers/all-MiniLM-L6-v2 singleton | `EmbeddingService`, `embed_text()`, `embed_texts()` (batch, size=32) |
+| **rag** | 6+ files | Hybrid retrieval + reranking + streaming | `retrieve()` (Qdrant + Postgres FTS, RRF), `rerank()` (BAAI/bge-reranker), `generate()` (Ollama, SSE) |
+| **db** | 3 files | AsyncSession, models, migrations | `Base`, `BaseModel` (UUID + timestamps), `get_session()` |
 
 ### File Count by Purpose
 
@@ -53,7 +53,7 @@ RAG Internal Knowledge is a monorepo containing a FastAPI backend (Python) and R
 ### Database Schema
 
 ```sql
--- users table
+-- users
 CREATE TABLE users (
   id UUID PRIMARY KEY,
   email VARCHAR(255) UNIQUE NOT NULL,
@@ -64,26 +64,26 @@ CREATE TABLE users (
   updated_at TIMESTAMP WITH TIME ZONE
 );
 
--- documents table
+-- documents
 CREATE TABLE documents (
   id UUID PRIMARY KEY,
   user_id UUID FOREIGN KEY REFERENCES users(id) ON DELETE CASCADE,
   filename VARCHAR(500) NOT NULL,
   file_type VARCHAR(50) NOT NULL,
   file_size BIGINT NOT NULL,
-  status VARCHAR(50) DEFAULT 'pending',
+  status VARCHAR(50) DEFAULT 'pending',  -- pending|processing|completed|failed
   chunk_count INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE,
   updated_at TIMESTAMP WITH TIME ZONE
 );
 
--- document_chunks table
+-- document_chunks (embeddings moved to Qdrant)
 CREATE TABLE document_chunks (
   id UUID PRIMARY KEY,
   document_id UUID FOREIGN KEY REFERENCES documents(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
   chunk_index INTEGER NOT NULL,
-  embedding VECTOR(384),  -- pgvector
+  content_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)),
   metadata_ JSONB DEFAULT '{}',
   created_at TIMESTAMP WITH TIME ZONE
 );
@@ -92,9 +92,10 @@ CREATE TABLE document_chunks (
 CREATE INDEX ix_documents_user_id ON documents(user_id);
 CREATE INDEX ix_documents_status ON documents(status);
 CREATE INDEX ix_document_chunks_document_id ON document_chunks(document_id);
-CREATE INDEX ix_document_chunks_embedding ON document_chunks 
-  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX ix_document_chunks_content_tsv ON document_chunks USING gin(content_tsv);
 ```
+
+**Note:** Embeddings (384-dim vectors) stored in Qdrant collection `chunks`, not PostgreSQL. Qdrant indexed with IVFFlat for cosine similarity.
 
 ### External Dependencies (PyPI)
 
@@ -107,11 +108,11 @@ CREATE INDEX ix_document_chunks_embedding ON document_chunks
 - alembic 1.13.0 (migrations)
 
 **Embeddings & LLM:**
-- sentence-transformers 3.0.0 (all-MiniLM-L6-v2)
-- tiktoken 0.7.0 (token counting)
+- sentence-transformers 3.0.0 (all-MiniLM-L6-v2, 384-dim)
+- tiktoken 0.7.0 (token counting, cl100k_base)
 - torch 2.3.0 (transformer dependency)
-- pgvector 0.3.0 (vector DB support)
-- httpx 0.27.0 (async HTTP to Ollama)
+- qdrant-client (vector DB client, async)
+- httpx 0.27.0 (async HTTP to Ollama + reranker)
 
 **Parsing:**
 - pypdf 4.2.0 (PDF → text)
@@ -201,15 +202,16 @@ CREATE INDEX ix_document_chunks_embedding ON document_chunks
 
 ## Infrastructure
 
-### Docker Compose Services
+### Docker Compose Services (6 Total)
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| **db** | pgvector/pgvector:pg16 | 5432 | PostgreSQL + pgvector |
-| **pgadmin** | dpage/pgadmin4:latest | 5050 | DB admin UI (included by default) |
-| **ollama** | ollama/ollama:latest | 11434 | LLM inference engine |
-| **backend** | custom (FastAPI) | 8000 | API server |
-| **frontend** | custom (Nginx) | 3000 | SPA server |
+| **db** | pgvector/pgvector:pg16 | 5432 | PostgreSQL + FTS + vector extension |
+| **pgadmin** | dpage/pgadmin4:latest | 5050 | DB admin UI |
+| **qdrant** | qdrant/qdrant:latest | 6333/6334 | Vector database (chunks collection, IVFFlat index) |
+| **ollama** | ollama/ollama:latest | 11434 | LLM inference (Qwen3 8B) |
+| **backend** | custom (Python 3.11) | 8000 | FastAPI + SQLAlchemy async + Qdrant client |
+| **frontend** | custom (Nginx) | 3000 | React SPA + reverse proxy to backend |
 
 ### Build Artifacts
 
@@ -243,16 +245,20 @@ CREATE INDEX ix_document_chunks_embedding ON document_chunks
 
 ## Known Limitations & Gaps
 
-1. **No background job queue** — uses BackgroundTasks (synchronous ish); consider Celery/RQ for Phase 3
-2. **No rate limiting** — add per-user quotas in Phase 2
-3. **No refresh tokens** — JWT only; add in Phase 2
-4. **No client `/auth/me` endpoint** — frontend decodes JWT naively; add proper endpoint Phase 2
+1. **No background job queue** — uses BackgroundTasks (not persistent); consider Celery/RQ Phase 3
+2. **No rate limiting** — add per-user quotas Phase 2
+3. **No refresh tokens** — JWT 24h only; Phase 2 candidate
+4. **No client `/auth/me` endpoint** — frontend decodes JWT naively; Phase 2
 5. **Minimal test coverage** — only health check; target ≥80% Phase 2
-6. **No document versioning** — upload overwrites; archive old versions Phase 3
-7. **No observability** — no metrics, logging, or distributed tracing
-8. **SSE token in query param** — not ideal for security; use WebSocket Phase 2+
-9. **No caching** — vector search + embedding results uncached
-10. **Single LLM model** — no fallback or model switching at runtime
+6. **OOS refusal accuracy 30%** — REFUSAL_PATTERNS regex too narrow (not model bug); Phase 2
+7. **Ollama CPU bottleneck** — ~3 min/query CPU-only; use GPU or qwen3:3b for iteration
+8. **No document versioning** — upload overwrites; archive old Phase 3
+9. **No observability** — no metrics, logging, or distributed tracing
+10. **SSE token in query param** — visible in logs; use WebSocket Phase 2+
+11. **No caching** — vector search + embedding results uncached; Phase 3 candidate
+12. **pgvector column still present** — unused (embeddings fully migrated to Qdrant); migration 003 dropped it
+13. **Background task failures** — no persistent job queue, no retry mechanism
+14. **HTTPS not enforced** — no TLS in Docker compose; use reverse proxy production
 
 ## Dependencies Graph
 

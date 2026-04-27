@@ -1,6 +1,6 @@
 # Project Roadmap
 
-**Last Updated:** 2026-04-21
+**Last Updated:** 2026-04-27
 
 ## Overview
 
@@ -17,26 +17,31 @@ RAG Internal Knowledge follows a 4-phase development roadmap, with Phase 1 MVP c
 - Suitable for small team pilot
 
 ### Features Completed
-- User registration & JWT authentication
-- Multi-format document upload (PDF, DOCX, TXT, MD)
-- Automatic document processing pipeline (parse → chunk → embed → store)
-- RAG query engine with pgvector retrieval
-- Streaming responses via Server-Sent Events (SSE)
-- Source citations for all answers
-- Per-user document isolation
-- Responsive React UI with Tailwind CSS
-- PostgreSQL + pgvector vector storage
-- Ollama self-hosted LLM integration
+- User registration & JWT authentication (HS256, 24h expiry, bcrypt)
+- Multi-format document upload (PDF, DOCX, TXT, MD) with status tracking
+- Automatic document processing pipeline (parse → chunk → embed → store in Qdrant)
+- Hybrid RAG query engine (Qdrant dense + Postgres FTS, RRF fusion, cross-encoder reranking)
+- Streaming responses via Server-Sent Events (SSE) with anti-hallucination system prompt
+- Source citations for all answers with relevance scores
+- Per-user document isolation (enforced at retrieval layer)
+- Responsive React UI with Tailwind CSS and glass morphism
+- PostgreSQL 16 + FTS (GIN index on content_tsv)
+- Qdrant vector database (IVFFlat index, chunks collection)
+- Ollama self-hosted LLM (Qwen3 8B, temp=0.1, context=8192)
+- Evaluation framework (golden set of 60 Q&A pairs, accuracy benchmarking)
+- Docker Compose orchestration (6 services: db, pgadmin, qdrant, ollama, backend, frontend)
 
-### Known Limitations
-- Minimal test coverage (only health check)
+### Known Limitations & Evaluation Results
+- Minimal test coverage (only health check test)
 - No rate limiting or quotas
 - No refresh tokens (24h JWT expiry only)
 - No `/auth/me` endpoint (frontend decodes JWT naively)
-- No document versioning
-- SSE token in query parameter (security concern)
-- Synchronous-style document processing (BackgroundTasks, no queue)
-- No caching
+- OOS refusal accuracy 30% (REFUSAL_PATTERNS regex gap, not model bug)
+- SSE token in query parameter (visible in logs/history)
+- Synchronous-style document processing (BackgroundTasks, not persistent)
+- No caching (vector search + embedding results uncached)
+- Ollama CPU bottleneck (~3 min/query, use GPU or qwen3:3b for faster iteration)
+- **Baseline Evaluation (60 Q&A golden set):** doc_hit@5=100%, MRR=0.948, cosine_sim=0.763, keyword_recall=0.830, citation=100%, OOS_refusal=30% (gap), p95=186s (Ollama CPU)
 
 ### Acceptance Criteria Met
 - ✅ Users can register, login, manage documents

@@ -1,6 +1,6 @@
 # Deployment Guide
 
-**Last Updated:** 2026-04-21
+**Last Updated:** 2026-04-27 | **6 Docker Services:** db, pgadmin, qdrant, ollama, backend, frontend
 
 ## Prerequisites
 
@@ -49,6 +49,10 @@ SECRET_KEY=<generate-random-string>  # See "Generate SECRET_KEY" section
 OLLAMA_BASE_URL=http://ollama:11434
 LLM_MODEL=qwen3:8b
 
+# Qdrant (Docker internal hostname)
+QDRANT_URL=http://qdrant:6333
+QDRANT_COLLECTION=chunks
+
 # Embeddings
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 EMBEDDING_DIM=384
@@ -56,6 +60,16 @@ EMBEDDING_DIM=384
 # Chunking
 CHUNK_SIZE=512
 CHUNK_OVERLAP=50
+
+# Hybrid Search
+HYBRID_ENABLED=true
+HYBRID_ALPHA=0.7
+HYBRID_RRF_K=60
+
+# Reranking
+RERANKER_ENABLED=true
+RERANKER_MODEL=BAAI/bge-reranker-base
+RETRIEVAL_TOP_N=20
 
 # API
 CORS_ORIGINS=["http://localhost:3000"]
@@ -89,11 +103,13 @@ docker compose exec ollama ollama list
 
 ### 5. Access System
 
-| Service | URL |
-|---------|-----|
-| **Frontend** | http://localhost:3000 |
-| **API Docs** | http://localhost:8000/docs |
-| **Health Check** | http://localhost:8000/health |
+| Service | URL | Purpose |
+|---------|-----|---------|
+| **Frontend** | http://localhost:3000 | React SPA (chat, documents) |
+| **API Docs** | http://localhost:8000/docs | Swagger interactive docs |
+| **Health Check** | http://localhost:8000/health | Backend health status |
+| **Qdrant Dashboard** | http://localhost:6333/dashboard | Vector DB admin UI |
+| **PgAdmin** | http://localhost:5050 | PostgreSQL admin UI (user: admin@admin.com) |
 
 ### 6. Stop Services
 
@@ -256,6 +272,13 @@ poetry run pytest --cov=src
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama inference server URL |
 | `LLM_MODEL` | `qwen3:8b` | Model name; must be pulled first |
 
+### Qdrant Vector DB
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant API URL |
+| `QDRANT_COLLECTION` | `chunks` | Collection name for document embeddings |
+
 ### Embeddings
 
 | Variable | Default | Description |
@@ -267,11 +290,22 @@ poetry run pytest --cov=src
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CHUNK_SIZE` | `512` | Tokens per chunk (recursive split) |
+| `CHUNK_SIZE` | `512` | Tokens per chunk (recursive split, tiktoken cl100k_base) |
 | `CHUNK_OVERLAP` | `50` | Token overlap between chunks |
 | `UPLOAD_DIR` | `./uploads` | Directory for uploaded files |
 | `MAX_UPLOAD_SIZE_MB` | `50` | Max file size in MB |
 | `ALLOWED_EXTENSIONS` | `["pdf","docx","txt","md"]` | Allowed file formats |
+
+### Hybrid Search & Reranking
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HYBRID_ENABLED` | `true` | Enable hybrid search (Qdrant + Postgres FTS) |
+| `HYBRID_ALPHA` | `0.7` | RRF alpha parameter for score weighting |
+| `HYBRID_RRF_K` | `60` | RRF k parameter (top-k from each retriever) |
+| `RERANKER_ENABLED` | `true` | Enable cross-encoder reranking |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Reranker model name |
+| `RETRIEVAL_TOP_N` | `20` | Top-N candidates before reranking |
 
 ### API & CORS
 

@@ -20,6 +20,8 @@ async def lifespan(app: FastAPI):
     if settings.RERANKER_ENABLED:
         logger.info("Loading reranker model...")
         reranker_service.load()
+    logger.info("Loading BM25 encoder...")
+    qdrant_service.load_bm25()
     logger.info("Initializing Qdrant collection...")
     await qdrant_service.ensure_collection()
     logger.info("Application ready")

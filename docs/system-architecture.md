@@ -1,6 +1,6 @@
 # System Architecture
 
-**Last Updated:** 2026-04-21
+**Last Updated:** 2026-04-27
 
 ## High-Level Overview
 
@@ -17,36 +17,36 @@ RAG Internal Knowledge is a distributed system with 4 main services orchestrated
 ┌────────────────────────────▼──────────────────────────────────────────┐
 │                      Backend (Port 8000)                             │
 │                   FastAPI + SQLAlchemy async                         │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐             │
-│  │ Auth Module │  │ Documents    │  │ RAG Query       │             │
-│  │ (JWT HS256) │  │ - Upload     │  │ - Embed         │             │
-│  │ - register  │  │ - Parse      │  │ - Retrieve      │             │
-│  │ - login     │  │ - Chunk      │  │ - Generate      │             │
-│  │             │  │ - Embed      │  │ - Stream (SSE)  │             │
-│  │             │  │ - Status     │  │                 │             │
-│  └─────────────┘  └──────┬───────┘  └────────┬────────┘             │
-│                          │                    │                     │
-│                    BackgroundTasks       Ollama HTTP                │
-│                    (async processing)    (async)                    │
-└────────────────────────────┬─────────────────┬──────────────────────┘
-                             │                 │
-                             │        ┌────────▼──────┐
-                             │        │ Ollama (11434)│
-                             │        │ Qwen3 8B      │
-                             │        │ (local LLM)   │
-                             │        └───────────────┘
-                             │
-        ┌────────────────────▼──────────────────────┐
-        │  PostgreSQL 16 + pgvector (Port 5432)    │
-        │  ┌──────────┐  ┌──────────┐ ┌───────────┐│
-        │  │users     │  │documents │ │doc_chunks ││
-        │  │          │  │          │ │           ││
-        │  │UUID, jwt │  │UUID, meta│ │embedding  ││
-        │  │hashed_pw │  │status    │ │ (384-dim) ││
-        │  │email     │  │chunks    │ │ IVFFlat   ││
-        │  └──────────┘  └──────────┘ │ cosine idx││
-        │                             └───────────┘│
-        └─────────────────────────────────────────┘
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────────────┐        │
+│  │Auth Module  │  │ Documents    │  │ RAG Query (Hybrid)   │        │
+│  │(JWT HS256)  │  │ - Upload     │  │ - Embed (384-dim)    │        │
+│  │ - register  │  │ - Parse      │  │ - Qdrant cosine      │        │
+│  │ - login     │  │ - Chunk      │  │ - Postgres FTS       │        │
+│  │             │  │ - Embed      │  │ - RRF fusion (α=0.7) │        │
+│  │             │  │ - Background │  │ - Rerank (bge-base)  │        │
+│  │             │  │ - Status     │  │ - Generate (SSE)     │        │
+│  └─────────────┘  └──────────────┘  └──────────┬───────────┘        │
+│                                                  │                    │
+│                    Ollama HTTP + Qdrant API      │                    │
+└─────────────────────┬──────────────────────────┬─┘                    │
+                      │                          │                      │
+          ┌───────────▼────┐          ┌──────────▼────────┐             │
+          │ Ollama         │          │ Qdrant           │             │
+          │ (Port 11434)   │          │ (Port 6333)      │             │
+          │ Qwen3 8B       │          │ chunks collection│             │
+          │ (streaming)    │          │ (IVFFlat index)  │             │
+          └────────────────┘          └──────────────────┘             │
+                                                                         │
+        ┌────────────────────────────────────────────┐                  │
+        │  PostgreSQL 16 + FTS (Port 5432)         │                  │
+        │  ┌──────────┐  ┌──────────┐ ┌──────────┐ │                  │
+        │  │users     │  │documents │ │doc_chunks│ │                  │
+        │  │UUID, jwt │  │status    │ │content   │ │                  │
+        │  │hashed_pw │  │chunks    │ │content   │ │                  │
+        │  │email     │  │metadata  │ │_tsv (GIN)│ │                  │
+        │  └──────────┘  └──────────┘ │FTS index │ │                  │
+        │                             └──────────┘ │                  │
+        └────────────────────────────────────────────┘                  │
 ```
 
 ## Component Responsibilities
@@ -99,14 +99,15 @@ GET    /rag/query-stream        → embed → retrieve → generate (SSE stream)
 
 | Service | Module | Responsibility |
 |---------|--------|-----------------|
-| **AuthService** | auth/ | Register, hash password, create/verify JWT tokens |
-| **DocumentService** | documents/ | Upload handler, background task orchestration, status updates |
-| **ParserService** | documents/parser.py | PDF/DOCX/TXT/MD → text extraction |
-| **ChunkerService** | documents/chunker.py | Recursive token-based splitting (512 tokens, 50 overlap) |
-| **EmbeddingService** | embeddings/ | Singleton, loads model at startup, batch inference |
-| **RetrieverService** | rag/retriever.py | pgvector cosine similarity (user-scoped) |
-| **GeneratorService** | rag/generator.py | Ollama HTTP calls, streaming LLM responses |
-| **RAGService** | rag/service.py | Orchestrates embed → retrieve → generate |
+| **AuthService** | auth/ | Register, hash password (bcrypt), create/verify JWT tokens (HS256, 24h) |
+| **DocumentService** | documents/ | Upload handler, background task orchestration, status tracking |
+| **ParserService** | documents/parser.py | PDF/DOCX/TXT/MD → text extraction (pypdf, python-docx) |
+| **ChunkerService** | documents/chunker.py | Recursive split (tiktoken cl100k_base, 512 tokens, 50 overlap) |
+| **EmbeddingService** | embeddings/ | Singleton, sentence-transformers/all-MiniLM-L6-v2 (384-dim), batch_size=32 |
+| **RetrieverService** | rag/retriever.py | Hybrid retrieval: Qdrant cosine + Postgres FTS, RRF fusion (alpha=0.7, k=60) |
+| **RankerService** | rag/ranker.py | Cross-encoder reranking (BAAI/bge-reranker-base), top_k selection |
+| **GeneratorService** | rag/generator.py | Ollama HTTP calls (async), streaming, anti-hallucination system prompt |
+| **RAGService** | rag/service.py | Orchestrates: embed → hybrid retrieve → rerank → generate |
 
 ### Database (PostgreSQL + pgvector)
 
@@ -125,15 +126,17 @@ GET    /rag/query-stream        → embed → retrieve → generate (SSE stream)
 - `documents.user_id` — fast filtering by owner
 - `documents.status` — fast status queries
 - `document_chunks.document_id` — cascade deletes
-- `document_chunks.embedding` — IVFFlat (cosine_ops, lists=100) for vector search
+- `document_chunks.content_tsv` — GIN index for full-text search (generated TSVECTOR column)
 
-**Vector Search:**
+**Postgres FTS Search:**
 ```sql
 SELECT * FROM document_chunks
 WHERE document_id IN (SELECT id FROM documents WHERE user_id = current_user_id)
-ORDER BY embedding <-> query_embedding  -- cosine distance
-LIMIT 5;
+ORDER BY ts_rank_cd(content_tsv, query_ts) DESC
+LIMIT 20;  -- top results for RRF fusion
 ```
+
+**Note:** Embeddings are stored in Qdrant, not PostgreSQL (pgvector column removed in migration 003)
 
 ### Ollama (LLM Service)
 
@@ -193,7 +196,7 @@ Frontend polls GET /documents, sees status change
 - Failures logged but document stays in "processing" or updates to "failed"
 - No retry mechanism (Phase 2 candidate)
 
-### 2. RAG Query Flow
+### 2. Hybrid RAG Query Flow
 
 ```
 User submits question
@@ -202,28 +205,43 @@ POST /rag/query OR GET /rag/query-stream
     ↓
 Validate query (1-2000 chars), top_k (1-20, default 5)
     ↓
-Embed query (same model as docs: all-MiniLM-L6-v2)
+Embed query (sentence-transformers/all-MiniLM-L6-v2, 384-dim)
     ↓
-pgvector cosine similarity search
-    ├─ Filter by current_user.id (document isolation)
-    ├─ ORDER BY embedding <-> query_embedding
-    └─ LIMIT top_k
+[HYBRID RETRIEVAL]
+├─ Parallel: Qdrant cosine similarity search (dense)
+│   └─ Filter by user_id, ORDER BY cosine distance, LIMIT k=60
+├─ Parallel: Postgres FTS search (sparse)
+│   └─ Filter by user_id, ORDER BY ts_rank_cd, LIMIT k=60
+├─ Merge results via RRF fusion (alpha=0.7, k=60)
+│   └─ Score = (1/(alpha + rank_dense)) + (1/(alpha + rank_sparse))
+└─ Select top RETRIEVAL_TOP_N=20 candidates
     ↓
-Assemble context from top-k chunks
+[CROSS-ENCODER RERANKING]
+├─ Rerank top-20 with BAAI/bge-reranker-base
+└─ Select final top-k (default 5)
     ↓
-Build Ollama prompt: "Context: [chunks]\n\nQuestion: [query]"
+Assemble context + anti-hallucination system prompt
     ↓
 POST /api/chat (Ollama) with stream={true|false}
+├─ Model: Qwen3 8B
+├─ Temperature: 0.1 (low randomness)
+├─ Context window: 8192 tokens
+└─ Max generation: 512 tokens
     ↓
 If stream=true:
     ├─ Open SSE connection
-    ├─ Stream token-by-token as "data: {event}" lines
-    └─ Close with "data: {done}"
-If stream=false:
-    └─ Return full answer + sources as JSON
+    ├─ Stream delta events (text chunks)
+    ├─ Send sources event (ranked chunks)
+    └─ Close with done event
     ↓
-Frontend displays answer + citation cards
+Frontend displays answer + citation cards with relevance scores
 ```
+
+**System Prompt Strategy:**
+- Grounding: cite retrieved chunks only
+- Citations: format as [Source N] per chunk
+- Refusal: decline out-of-scope questions
+- Language mirroring: respond in question language
 
 **SSE Event Format:**
 ```
@@ -321,40 +339,51 @@ Middleware (get_current_user) verifies token:
 
 ## Deployment Topology
 
-### Docker Compose
+### Docker Compose (6 Services)
 
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| **db** | pgvector/pgvector:pg16 | 5432 | PostgreSQL + FTS |
+| **pgadmin** | dpage/pgadmin4:latest | 5050 | DB admin UI |
+| **qdrant** | qdrant/qdrant:latest | 6333/6334 | Vector database |
+| **ollama** | ollama/ollama:latest | 11434 | LLM inference |
+| **backend** | Custom Dockerfile | 8000 | FastAPI app |
+| **frontend** | Custom Dockerfile | 3000 | Nginx + SPA |
+
+**Key Config:**
 ```yaml
-services:
-  db:
-    image: pgvector/pgvector:pg16
-    ports: [5432]
-    environment: POSTGRES_DB=rag_db, POSTGRES_USER/PASSWORD
-    volumes: [pgdata:/var/lib/postgresql/data]
-    healthcheck: pg_isready -U postgres
+backend:
+  depends_on:
+    db:
+      condition: service_healthy
+    ollama:
+      condition: service_started
+    qdrant:
+      condition: service_started
+  environment:
+    DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/rag_db
+    QDRANT_URL=http://qdrant:6333
+    QDRANT_COLLECTION=chunks
+    OLLAMA_BASE_URL=http://ollama:11434
+    HYBRID_ENABLED=true
+    HYBRID_ALPHA=0.7
+    HYBRID_RRF_K=60
+    RERANKER_ENABLED=true
+    RERANKER_MODEL=BAAI/bge-reranker-base
+    RETRIEVAL_TOP_N=20
+  volumes:
+    - ./backend/uploads:/app/uploads
 
-  ollama:
-    image: ollama/ollama:latest
-    ports: [11434]
-    volumes: [ollama-models:/root/.ollama]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia  # GPU passthrough (optional)
+frontend:
+  environment:
+    VITE_API_URL=http://backend:8000
 
-  backend:
-    build: ./backend
-    ports: [8000]
-    environment: DATABASE_URL, SECRET_KEY, OLLAMA_BASE_URL, LLM_MODEL, EMBEDDING_MODEL, ...
-    depends_on: [db, ollama]
-    volumes: [./backend/uploads:/app/uploads]
-    command: poetry run alembic upgrade head && poetry run uvicorn ...
-
-  frontend:
-    build: ./frontend
-    ports: [3000]
-    environment: VITE_API_URL=http://backend:8000
-    depends_on: [backend]
+ollama:
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia  # GPU passthrough (optional)
 ```
 
 ### Resource Requirements
