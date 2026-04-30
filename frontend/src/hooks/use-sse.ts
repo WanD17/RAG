@@ -6,6 +6,7 @@ interface SSEState {
   sources: SourceDocument[];
   isStreaming: boolean;
   error: string | null;
+  conversationId: string | null;
 }
 
 export function useSSE() {
@@ -14,13 +15,14 @@ export function useSSE() {
     sources: [],
     isStreaming: false,
     error: null,
+    conversationId: null,
   });
   const esRef = useRef<EventSource | null>(null);
 
   const startStream = useCallback((url: string) => {
     if (esRef.current) esRef.current.close();
 
-    setState({ answer: '', sources: [], isStreaming: true, error: null });
+    setState((prev) => ({ ...prev, answer: '', sources: [], isStreaming: true, error: null }));
 
     const es = new EventSource(url);
     esRef.current = es;
@@ -43,8 +45,14 @@ export function useSSE() {
       }
     });
 
-    es.addEventListener('done', () => {
-      setState((prev) => ({ ...prev, isStreaming: false }));
+    es.addEventListener('done', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const convId: string | null = data?.conversation_id ?? null;
+        setState((prev) => ({ ...prev, isStreaming: false, conversationId: convId }));
+      } catch {
+        setState((prev) => ({ ...prev, isStreaming: false }));
+      }
       es.close();
     });
 

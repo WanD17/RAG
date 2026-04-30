@@ -39,4 +39,5 @@ export interface SourceDocument {
 export interface QueryResponse {
   answer: string;
   sources: SourceDocument[];
+  conversation_id: string;
 }

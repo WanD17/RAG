@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import settings
 from src.embeddings.service import embedding_service
 from src.rag import generator, retriever
+from src.rag.conversation import conversation_manager
 from src.rag.fusion import reciprocal_rank_fusion
+from src.rag.query_rewriter import rewrite_query
 from src.rag.reranker import reranker_service
 from src.rag.schemas import QueryResponse, SourceChunk
 
@@ -61,10 +63,16 @@ async def query(
     query_text: str,
     user_id: uuid.UUID,
     top_k: int = 5,
+    conversation_id: uuid.UUID | None = None,
 ) -> QueryResponse:
-    logger.debug(f"RAG query: user={user_id}, top_k={top_k}")
+    logger.debug(f"RAG query: user={user_id}, top_k={top_k}, conv={conversation_id}")
 
-    query_embedding = embedding_service.embed_text(query_text)
+    if conversation_id is None:
+        conversation_id = conversation_manager.create()
+    history = conversation_manager.get_history(conversation_id)
+
+    retrieval_query = await rewrite_query(query_text, history)
+    query_embedding = embedding_service.embed_text(retrieval_query)
 
     retrieval_n = (
         max(settings.RETRIEVAL_TOP_N, top_k) if settings.RERANKER_ENABLED else top_k
@@ -72,7 +80,7 @@ async def query(
 
     if settings.HYBRID_ENABLED:
         candidates = await _hybrid_candidates(
-            query_text, query_embedding, retrieval_n, user_id
+            retrieval_query, query_embedding, retrieval_n, user_id
         )
     else:
         candidates = await retriever.retrieve(
@@ -85,6 +93,7 @@ async def query(
             answer="No relevant documents found in your knowledge base for this query.",
             sources=[],
             query=query_text,
+            conversation_id=conversation_id,
         )
 
     if settings.RERANKER_ENABLED:
@@ -95,7 +104,8 @@ async def query(
     else:
         chunks = candidates[:top_k]
 
-    answer = await generator.generate_answer(query_text, chunks)
+    answer = await generator.generate_answer(query_text, chunks, history=history)
+    conversation_manager.add_turn(conversation_id, query_text, answer)
 
     sources = [
         SourceChunk(
@@ -108,4 +118,4 @@ async def query(
         for chunk in chunks
     ]
 
-    return QueryResponse(answer=answer, sources=sources, query=query_text)
+    return QueryResponse(answer=answer, sources=sources, query=query_text, conversation_id=conversation_id)

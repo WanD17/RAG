@@ -18,6 +18,8 @@ from src.embeddings.service import embedding_service
 from src.rag import retriever
 from src.rag import generator as gen
 from src.rag import service
+from src.rag.conversation import conversation_manager
+from src.rag.query_rewriter import rewrite_query
 from src.rag.reranker import reranker_service
 from src.rag.schemas import QueryRequest, QueryResponse
 
@@ -31,7 +33,13 @@ async def query_knowledge_base(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        return await service.query(db, payload.query, current_user.id, payload.top_k)
+        return await service.query(
+            db,
+            payload.query,
+            current_user.id,
+            payload.top_k,
+            conversation_id=payload.conversation_id,
+        )
     except Exception as e:
         logger.exception("RAG query failed")
         raise HTTPException(
@@ -63,21 +71,27 @@ async def query_knowledge_base_stream(
     question: str = Query(..., min_length=1, max_length=2000),
     token: str = Query(...),
     top_k: int = Query(default=5, ge=1, le=20),
+    conversation_id: uuid.UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     current_user = await _user_from_query_token(token, db)
 
-    query_embedding = embedding_service.embed_text(question)
+    conv_id = conversation_id if conversation_id is not None else conversation_manager.create()
+    history = conversation_manager.get_history(conv_id)
+
+    retrieval_question = await rewrite_query(question, history)
+    query_embedding = embedding_service.embed_text(retrieval_question)
     retrieval_n = max(settings.RETRIEVAL_TOP_N, top_k) if settings.RERANKER_ENABLED else top_k
 
     if settings.HYBRID_ENABLED:
         candidates = await service._hybrid_candidates(
-            db, question, query_embedding, retrieval_n, current_user.id
+            retrieval_question, query_embedding, retrieval_n, current_user.id
         )
     else:
         candidates = await retriever.retrieve(
             query_embedding, top_k=retrieval_n, user_id=current_user.id
         )
+        candidates = service._apply_score_threshold(candidates, hybrid=False)
 
     if settings.RERANKER_ENABLED and candidates:
         chunks = await asyncio.to_thread(
@@ -87,10 +101,11 @@ async def query_knowledge_base_stream(
         chunks = candidates[:top_k]
 
     async def event_stream() -> AsyncGenerator[str, None]:
+        collected: list[str] = []
         try:
             if not chunks:
                 yield f"event: delta\ndata: {json.dumps('No relevant documents found.')}\n\n"
-                yield "event: done\ndata: {}\n\n"
+                yield f"event: done\ndata: {json.dumps({'conversation_id': str(conv_id)})}\n\n"
                 return
 
             sources = [
@@ -105,10 +120,12 @@ async def query_knowledge_base_stream(
             ]
             yield f"event: sources\ndata: {json.dumps(sources)}\n\n"
 
-            async for text in gen.generate_answer_stream(question, chunks):
+            async for text in gen.generate_answer_stream(question, chunks, history=history):
+                collected.append(text)
                 yield f"event: delta\ndata: {json.dumps(text)}\n\n"
 
-            yield "event: done\ndata: {}\n\n"
+            conversation_manager.add_turn(conv_id, question, "".join(collected))
+            yield f"event: done\ndata: {json.dumps({'conversation_id': str(conv_id)})}\n\n"
 
         except Exception as e:
             logger.error(f"Stream error: {e}")

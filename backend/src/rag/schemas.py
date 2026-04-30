@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -7,6 +6,7 @@ from pydantic import BaseModel, Field
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=5, ge=1, le=20)
+    conversation_id: uuid.UUID | None = None
 
 
 class SourceChunk(BaseModel):
@@ -21,3 +21,4 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[SourceChunk]
     query: str
+    conversation_id: uuid.UUID

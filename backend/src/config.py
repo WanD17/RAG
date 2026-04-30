@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
     RETRIEVAL_TOP_N: int = 20
 
+    REWRITER_ENABLED: bool = True
+
     HYBRID_ENABLED: bool = True
     HYBRID_ALPHA: float = 0.7
     HYBRID_RRF_K: int = 60

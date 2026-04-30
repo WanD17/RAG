@@ -54,17 +54,26 @@ def _build_context(chunks: list[ChunkResult]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def _build_messages(query: str, context_chunks: list[ChunkResult]) -> list[dict]:
+def _build_messages(
+    query: str,
+    context_chunks: list[ChunkResult],
+    history: list[dict] | None = None,
+) -> list[dict]:
     context = _build_context(context_chunks)
     user_content = f"CONTEXT:\n{context}\n\n---\nQUESTION: {query}"
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
+    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user_content})
+    return messages
 
 
-async def generate_answer(query: str, context_chunks: list[ChunkResult]) -> str:
-    messages = _build_messages(query, context_chunks)
+async def generate_answer(
+    query: str,
+    context_chunks: list[ChunkResult],
+    history: list[dict] | None = None,
+) -> str:
+    messages = _build_messages(query, context_chunks, history)
 
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -86,9 +95,11 @@ async def generate_answer(query: str, context_chunks: list[ChunkResult]) -> str:
 
 
 async def generate_answer_stream(
-    query: str, context_chunks: list[ChunkResult]
+    query: str,
+    context_chunks: list[ChunkResult],
+    history: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
-    messages = _build_messages(query, context_chunks)
+    messages = _build_messages(query, context_chunks, history)
     import json
 
     try:

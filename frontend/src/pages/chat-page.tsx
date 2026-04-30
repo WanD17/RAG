@@ -15,7 +15,7 @@ const suggestions = [
 
 export function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const { answer, sources, isStreaming, error, startStream, stopStream } = useSSE();
+  const { answer, sources, isStreaming, error, conversationId, startStream, stopStream } = useSSE();
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamingIdRef = useRef<string | null>(null);
 
@@ -64,7 +64,7 @@ export function ChatPage() {
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    startStream(buildStreamUrl(text));
+    startStream(buildStreamUrl(text, conversationId ?? undefined));
   }
 
   return (
