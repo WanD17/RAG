@@ -29,25 +29,34 @@ Latest on top.
 
 | Date | Tag | C | T | t1_hit@5 | coref_kw | ellip_hit@5 | no_leak | oos_ref | conv_ok | p50 ms | p95 ms | Notes |
 |------|-----|:-:|:-:|:--------:|:--------:|:-----------:|:-------:|:-------:|:-------:|:------:|:------:|-------|
+| 2026-04-30 17:24 | **with-rewriter** | 9 | 19 | 88.9% | 0.500 | 100.0% | 100.0% | 100.0% | 100.0% | 160,611 | 231,907 | with rewriter |
 | 2026-04-30 16:19 | **conv-manager-v1** | 9 | 19 | 88.9% | 0.500 | 50.0% | 100.0% | 0.0% | 100.0% | 161,686 | 200,525 | baseline |
 
 ---
+
+## Analysis — conv-manager-v1 → with-rewriter delta
+
+| Metric | conv-manager-v1 | with-rewriter | Delta | Target met |
+|--------|:-:|:-:|:-:|:-:|
+| t1_hit@5 | 88.9% | 88.9% | = | ✅ (expected: no change) |
+| coref_kw | 0.500 | 0.500 | = | ⚠️ below 0.6 target |
+| ellip_hit@5 | 50.0% | 100.0% | **+50pp** | ✅ |
+| no_leak | 100.0% | 100.0% | = | ✅ |
+| oos_ref | 0.0% | 100.0% | **+100pp** | ✅ (side effect of rewriter) |
+| conv_ok | 100.0% | 100.0% | = | ✅ |
+
+**ellip_hit@5 50% → 100%** — rewriter expanded elliptical queries (e.g. "And the rate on public holidays?" → standalone query) before retrieval. Exactly as expected.
+
+**oos_ref 0% → 100%** — unexpected bonus: rewriter expanded "How does this compare to France and the US?" into a query containing "France / United States" which has no matching documents in the Vietnamese law corpus, so retrieval returns weak/no candidates and the LLM correctly refuses.
+
+**coref_kw unchanged at 0.500** — coreference turns (e.g. "its members", "this rate") appear to pass the heuristic gate as self-contained (≥8 words, no trigger pronoun matched). Investigation needed: check if `_PRONOUN_RE` is catching "its" / "this" in those specific queries, or if the issue is retrieval succeeding but LLM missing required keywords.
+
+**p95 latency +31s** — rewriter adds 1 LLM call per rewritten turn. Acceptable at current scale; can gate with `REWRITER_ENABLED=false` if needed.
 
 ## Future runs
 
 ### Planned
 
-- [ ] `no-rewriter` — baseline trước khi có query rewriter (ellip_hit@5 dự kiến thấp)
-- [ ] `with-rewriter` — sau khi implement query rewriter → so sánh delta trên coref_kw + ellip_hit@5
-
-### Interpretation guide
-
-Sau `no-rewriter`:
-- `coref_kw` thấp nhưng `t1_hit@5` cao → query rewriter sẽ giúp được
-- `ellip_hit@5` rất thấp → elliptical rewrite quan trọng
-- `no_leak = 100%` → conversation history không gây nhiễu (expected vì history chỉ inject vào LLM, không vào retrieval)
-
-Sau `with-rewriter`:
-- `coref_kw` và `ellip_hit@5` phải tăng rõ rệt
-- `t1_hit@5` không đổi (turn 1 không qua rewriter)
-- `no_leak` không đổi hoặc tốt hơn
+- [x] ~~`no-rewriter`~~ — skipped (conv-manager-v1 serves as pre-rewriter baseline)
+- [x] `with-rewriter` — ✅ done 2026-04-30
+- [ ] `coref-fix` — investigate coref_kw stuck at 0.500; tune `_PRONOUN_RE` or lower heuristic gate threshold → expect coref_kw > 0.6
