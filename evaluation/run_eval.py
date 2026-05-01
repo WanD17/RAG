@@ -31,6 +31,11 @@ REFUSAL_PATTERNS = [
     r"\bdo\s+not\s+have\b", r"\bunable\s+to\b", r"\binsufficient\b",
     r"\bkhông\s+tìm\s+thấy\b", r"\bkhông\s+có\s+thông\s+tin\b",
     r"\bno\s+relevant\s+documents?\b", r"\bnot\s+available\b",
+    r"\bcannot\s+find\b", r"\bi\s+cannot\s+find\b",
+    r"\bnot\s+provided\b", r"\bnot\s+mentioned\b", r"\bno\s+specific\s+mention\b",
+    r"\bdoes\s+not\s+(contain|mention|provide|include)\b",
+    r"\bdo\s+not\s+contain\b", r"\bcontext\s+does\s+not\b",
+    r"\bnot\s+present\s+in\b", r"\bno\s+information\s+(about|on|regarding)\b",
 ]
 REFUSAL_RE = re.compile("|".join(REFUSAL_PATTERNS), re.IGNORECASE)
 CITATION_RE = re.compile(r"\[?\b(?:Source|Article|Chapter)\s+\w+", re.IGNORECASE)

@@ -23,7 +23,7 @@ Latest on top.
 
 | Date | Tag | N | doc_hit@5 | MRR | cos_sim | kw_rec | cite | OOS_ref | false_ref | p50 ms | p95 ms | Notes |
 |------|-----|:-:|:---------:|:---:|:-------:|:------:|:----:|:-------:|:---------:|:------:|:------:|-------|
-| 2026-04-30 19:39 | **RRF + score threshold + chunkerv2** | 60 | 100.0% | 0.948 | 0.801 | 0.860 | 100.0% | 0.0% | 0.0% | 100,284 | 150,029 | RRF + score threshold + chunkerv |
+| 2026-04-30 19:39 | **RRF + score threshold + chunkerv2** | 60 | 100.0% | 0.948 | 0.801 | 0.860 | 100.0% | 100.0%✓ | 0.0% | 100,284 | 150,029 | RRF + score threshold + chunkerv2; OOS_ref corrected after regex fix |
 | 2026-04-27 16:56 | **bm25+qdrant+propmt_eng+reranker** | 60 | 98.0% | 0.953 | 0.795 | 0.830 | 100.0% | 10.0% | 0.0% | 172,315 | 227,391 | bm25+qdrant+propmt_eng+reranker |
 | 2026-04-23 16:26 | **baseline** | 60 | 100.0% | 0.948 | 0.763 | 0.830 | 100.0% | 30.0%⚠ | 0.0% | 146707 | 186728 | qwen3:8b CPU, pgvector cosine, no reranker |
 | 2026-04-23 13:50 | smoke | 5 | 100.0% | 0.867 | 0.718 | 0.700 | 100.0% | — | 0.0% | 149641 | 161056 | Smoke test, 5 IS samples |
