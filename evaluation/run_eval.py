@@ -290,7 +290,9 @@ def main():
                 if prec is not None:
                     metrics["context_precision"] = prec
                 if faith is not None or prec is not None:
-                    print(f"    faithfulness={faith:.3f}  ctx_precision={prec:.3f}")
+                    f_str = f"{faith:.3f}" if faith is not None else "N/A"
+                    p_str = f"{prec:.3f}" if prec is not None else "N/A"
+                    print(f"    faithfulness={f_str}  ctx_precision={p_str}")
 
             per_sample.append({
                 "id": sample["id"],

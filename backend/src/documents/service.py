@@ -11,6 +11,7 @@ from src.config import settings
 from src.documents.chunker import chunk_text
 from src.documents.models import Document, DocumentChunk
 from src.documents.parser import parse_file
+from src.documents.preprocessor import preprocess
 from src.embeddings.service import embedding_service
 from src.rag.qdrant import qdrant_service
 
@@ -63,11 +64,17 @@ async def process_document(db: AsyncSession, document_id: uuid.UUID) -> None:
         await db.commit()
 
         file_path = _get_upload_path(document.id, document.filename)
-        raw_text = parse_file(str(file_path), document.file_type)
+        parsed = parse_file(str(file_path), document.file_type)
 
-        chunks = chunk_text(raw_text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
+        clean_text = preprocess(parsed.text, parsed.page_texts)
+        text_chunks = chunk_text(clean_text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
+        table_chunks = parsed.tables  # already formatted, each table is one chunk
+
+        chunks = text_chunks + table_chunks
         if not chunks:
             raise ValueError("No content extracted from document")
+
+        logger.debug(f"Chunks: {len(text_chunks)} text + {len(table_chunks)} table = {len(chunks)} total")
 
         embeddings = embedding_service.embed_texts(chunks)
         sparse_vectors = await asyncio.to_thread(qdrant_service.encode_bm25, chunks)

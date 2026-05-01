@@ -1,6 +1,6 @@
 # Codebase Summary
 
-**Last Updated:** 2026-04-27 | **Project Version:** 0.1.0
+**Last Updated:** 2026-05-01 | **Project Version:** 0.1.1 (Post-Sprint 1/2)
 
 ## Overview
 
@@ -17,9 +17,9 @@ RAG Internal Knowledge is a monorepo containing a FastAPI backend (Python) and R
 | Module | Files | Purpose | Key Classes/Functions |
 |--------|-------|---------|----------------------|
 | **auth** | 4 files | User authentication & JWT (HS256, 24h) | `User` (model), `register()`, `login()`, `get_current_user()` |
-| **documents** | 5 files | Upload, parse, chunk, embed pipeline | `Document`, `DocumentChunk` (models), `upload()`, background task processing |
-| **embeddings** | 1 file | sentence-transformers/all-MiniLM-L6-v2 singleton | `EmbeddingService`, `embed_text()`, `embed_texts()` (batch, size=32) |
-| **rag** | 6+ files | Hybrid retrieval + reranking + streaming | `retrieve()` (Qdrant + Postgres FTS, RRF), `rerank()` (BAAI/bge-reranker), `generate()` (Ollama, SSE) |
+| **documents** | 6 files | Upload, parse, chunk, embed pipeline | `Document`, `DocumentChunk` (models), `ParserService` (pdfplumber + tables), `PreprocessorService` |
+| **embeddings** | 1 file | BAAI/bge-base-en-v1.5 (768-dim) singleton with asymmetric encoding | `EmbeddingService`, `embed_text()`, `embed_texts()` (batch, size=32) |
+| **rag** | 8+ files | Conversation, query rewrite, hybrid retrieval, reranking, streaming | `ConversationManager`, `QueryRewriter`, `retrieve()` (Qdrant dense+sparse, RRF), `rerank()`, `generate()` |
 | **db** | 3 files | AsyncSession, models, migrations | `Base`, `BaseModel` (UUID + timestamps), `get_session()` |
 
 ### File Count by Purpose
@@ -95,7 +95,7 @@ CREATE INDEX ix_document_chunks_document_id ON document_chunks(document_id);
 CREATE INDEX ix_document_chunks_content_tsv ON document_chunks USING gin(content_tsv);
 ```
 
-**Note:** Embeddings (384-dim vectors) stored in Qdrant collection `chunks`, not PostgreSQL. Qdrant indexed with IVFFlat for cosine similarity.
+**Note:** Embeddings (768-dim vectors) stored in Qdrant collection `chunks`, not PostgreSQL. Qdrant indexed with HNSW for cosine similarity (dense) + fastembed Qdrant/bm25 sparse vectors.
 
 ### External Dependencies (PyPI)
 
@@ -108,14 +108,15 @@ CREATE INDEX ix_document_chunks_content_tsv ON document_chunks USING gin(content
 - alembic 1.13.0 (migrations)
 
 **Embeddings & LLM:**
-- sentence-transformers 3.0.0 (all-MiniLM-L6-v2, 384-dim)
+- sentence-transformers 3.0.0 (BAAI/bge-base-en-v1.5, 768-dim, asymmetric)
+- fastembed (Qdrant/bm25 sparse vectors for hybrid search)
 - tiktoken 0.7.0 (token counting, cl100k_base)
-- torch 2.3.0 (transformer dependency)
+- torch 2.3.0 (transformer dependency, CPU-only in Dockerfile)
 - qdrant-client (vector DB client, async)
 - httpx 0.27.0 (async HTTP to Ollama + reranker)
 
 **Parsing:**
-- pypdf 4.2.0 (PDF → text)
+- pdfplumber (PDF → text + table extraction, header/footer crop)
 - python-docx 1.1.0 (DOCX → text)
 
 **Auth:**
@@ -237,9 +238,9 @@ CREATE INDEX ix_document_chunks_content_tsv ON document_chunks USING gin(content
 
 | Operation | Target | Notes |
 |-----------|--------|-------|
-| Vector search (pgvector cosine) | <500ms | IVFFlat index with lists=100 |
-| Embedding (single chunk) | <100ms | sentence-transformers batch inference |
-| PDF parsing | <5s per 10MB | pypdf is synchronous in background task |
+| Vector search (Qdrant HNSW + BM25 sparse) | <200ms | Dense + sparse hybrid via RRF |
+| Embedding (single chunk, BGE 768d) | <100ms | sentence-transformers batch inference |
+| PDF parsing | <5s per 10MB | pdfplumber (synchronous in background task) |
 | LLM generation | 5-30s | Ollama on CPU (faster with GPU) |
 | Full RAG query (excl. LLM) | <2s | embedding + retrieval + context assembly |
 
@@ -250,15 +251,15 @@ CREATE INDEX ix_document_chunks_content_tsv ON document_chunks USING gin(content
 3. **No refresh tokens** — JWT 24h only; Phase 2 candidate
 4. **No client `/auth/me` endpoint** — frontend decodes JWT naively; Phase 2
 5. **Minimal test coverage** — only health check; target ≥80% Phase 2
-6. **OOS refusal accuracy 30%** — REFUSAL_PATTERNS regex too narrow (not model bug); Phase 2
-7. **Ollama CPU bottleneck** — ~3 min/query CPU-only; use GPU or qwen3:3b for iteration
-8. **No document versioning** — upload overwrites; archive old Phase 3
-9. **No observability** — no metrics, logging, or distributed tracing
-10. **SSE token in query param** — visible in logs; use WebSocket Phase 2+
-11. **No caching** — vector search + embedding results uncached; Phase 3 candidate
-12. **pgvector column still present** — unused (embeddings fully migrated to Qdrant); migration 003 dropped it
-13. **Background task failures** — no persistent job queue, no retry mechanism
-14. **HTTPS not enforced** — no TLS in Docker compose; use reverse proxy production
+6. **Ollama CPU bottleneck** — ~3 min/query CPU-only; use GPU or qwen3:3b for iteration
+7. **No document versioning** — upload overwrites; archive old Phase 3
+8. **No observability** — no metrics, logging, or distributed tracing
+9. **SSE token in query param** — visible in logs; use WebSocket Phase 2+
+10. **No caching** — vector search + embedding results uncached; Phase 3 candidate
+11. **Background task failures** — no persistent job queue, no retry mechanism
+12. **HTTPS not enforced** — no TLS in Docker compose; use reverse proxy production
+13. **Query rewriter latency** — LLM rewrite adds 0.5-1s for follow-up queries; consider caching Phase 3
+14. **Conversation storage** — in-memory OrderedDict lost on restart; add Redis backing Phase 3
 
 ## Dependencies Graph
 
@@ -270,15 +271,18 @@ FastAPI (main.py)
   │   └── passlib/bcrypt
   ├── Documents module
   │   ├── SQLAlchemy Document/DocumentChunk models
-  │   ├── pypdf, python-docx (parsers)
-  │   ├── tiktoken (chunking)
+  │   ├── ParserService (pdfplumber + table extraction)
+  │   ├── PreprocessorService (NFC, ligature, hyphen, dedup)
+  │   ├── tiktoken (chunking, breadcrumb prefix)
   │   ├── Embeddings service
-  │   │   └── sentence-transformers
+  │   │   └── sentence-transformers (BAAI/bge-base-en-v1.5, 768-dim)
   │   └── BackgroundTasks
   ├── RAG module
-  │   ├── pgvector (retrieval)
-  │   ├── Ollama (httpx async call)
-  │   └── EventSource (SSE streaming)
+  │   ├── ConversationManager (OrderedDict, sliding window 6 turns)
+  │   ├── QueryRewriter (heuristic + LLM rewrite)
+  │   ├── Qdrant (dense HNSW + sparse BM25, RRF fusion)
+  │   ├── Ollama (httpx async call, 6-section system prompt)
+  │   └── EventSource (SSE streaming with citations)
   └── Database
       ├── SQLAlchemy async
       └── asyncpg

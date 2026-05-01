@@ -1,6 +1,6 @@
 # System Architecture
 
-**Last Updated:** 2026-04-27
+**Last Updated:** 2026-05-01 | **Version:** 0.1.1 (Post-Sprint 1/2)
 
 ## High-Level Overview
 
@@ -19,10 +19,10 @@ RAG Internal Knowledge is a distributed system with 4 main services orchestrated
 │                   FastAPI + SQLAlchemy async                         │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────────────────┐        │
 │  │Auth Module  │  │ Documents    │  │ RAG Query (Hybrid)   │        │
-│  │(JWT HS256)  │  │ - Upload     │  │ - Embed (384-dim)    │        │
-│  │ - register  │  │ - Parse      │  │ - Qdrant cosine      │        │
-│  │ - login     │  │ - Chunk      │  │ - Postgres FTS       │        │
-│  │             │  │ - Embed      │  │ - RRF fusion (α=0.7) │        │
+│  │(JWT HS256)  │  │ - Upload     │  │ - Embed (768-dim)    │        │
+│  │ - register  │  │ - Parse      │  │ - Conversation Mgr   │        │
+│  │ - login     │  │ - Chunk      │  │ - Query Rewriter     │        │
+│  │             │  │ - Embed      │  │ - Qdrant D+Sparse    │        │
 │  │             │  │ - Background │  │ - Rerank (bge-base)  │        │
 │  │             │  │ - Status     │  │ - Generate (SSE)     │        │
 │  └─────────────┘  └──────────────┘  └──────────┬───────────┘        │
@@ -34,7 +34,7 @@ RAG Internal Knowledge is a distributed system with 4 main services orchestrated
           │ Ollama         │          │ Qdrant           │             │
           │ (Port 11434)   │          │ (Port 6333)      │             │
           │ Qwen3 8B       │          │ chunks collection│             │
-          │ (streaming)    │          │ (IVFFlat index)  │             │
+          │ (streaming)    │          │ (HNSW + sparse)  │             │
           └────────────────┘          └──────────────────┘             │
                                                                          │
         ┌────────────────────────────────────────────┐                  │
@@ -101,13 +101,16 @@ GET    /rag/query-stream        → embed → retrieve → generate (SSE stream)
 |---------|--------|-----------------|
 | **AuthService** | auth/ | Register, hash password (bcrypt), create/verify JWT tokens (HS256, 24h) |
 | **DocumentService** | documents/ | Upload handler, background task orchestration, status tracking |
-| **ParserService** | documents/parser.py | PDF/DOCX/TXT/MD → text extraction (pypdf, python-docx) |
-| **ChunkerService** | documents/chunker.py | Recursive split (tiktoken cl100k_base, 512 tokens, 50 overlap) |
-| **EmbeddingService** | embeddings/ | Singleton, sentence-transformers/all-MiniLM-L6-v2 (384-dim), batch_size=32 |
-| **RetrieverService** | rag/retriever.py | Hybrid retrieval: Qdrant cosine + Postgres FTS, RRF fusion (alpha=0.7, k=60) |
-| **RankerService** | rag/ranker.py | Cross-encoder reranking (BAAI/bge-reranker-base), top_k selection |
-| **GeneratorService** | rag/generator.py | Ollama HTTP calls (async), streaming, anti-hallucination system prompt |
-| **RAGService** | rag/service.py | Orchestrates: embed → hybrid retrieve → rerank → generate |
+| **ParserService** | documents/parser.py | pdfplumber (header/footer crop 6%), table extraction (key:value or pipe-sep), returns page_texts + tables |
+| **PreprocessorService** | documents/preprocessor.py | Unicode NFC, ligature fix, hyphen merge, header/footer dedup, blank collapse |
+| **ChunkerService** | documents/chunker.py | Section-aware split (heading detection + breadcrumb prefix `[Chapter > Article]`), 512 tokens / 50 overlap |
+| **EmbeddingService** | embeddings/ | Singleton, BAAI/bge-base-en-v1.5 (768-dim), asymmetric: query prefix vs no prefix for passages, batch_size=32 |
+| **ConversationManager** | rag/conversation.py | In-memory OrderedDict, 1000 convs × 50 msgs, sliding window 6 turns |
+| **QueryRewriter** | rag/query_rewriter.py | Heuristic gate + LLM rewrite for follow-up queries, sanitization + fallback |
+| **RetrieverService** | rag/retriever.py | Hybrid: Qdrant dense (768d HNSW) + sparse BM25, RRF fusion (alpha=0.7, k=60), score threshold filtering |
+| **RankerService** | rag/ranker.py | Cross-encoder reranking (BAAI/bge-reranker-base), top-20 → top-5 |
+| **GeneratorService** | rag/generator.py | Ollama HTTP calls (async), streaming, 6-section system prompt, citation enforcement |
+| **RAGService** | rag/service.py | Orchestrates: convo + rewrite → embed → hybrid retrieve → rerank → generate |
 
 ### Database (PostgreSQL + pgvector)
 
@@ -136,7 +139,7 @@ ORDER BY ts_rank_cd(content_tsv, query_ts) DESC
 LIMIT 20;  -- top results for RRF fusion
 ```
 
-**Note:** Embeddings are stored in Qdrant, not PostgreSQL (pgvector column removed in migration 003)
+**Note:** Embeddings stored in Qdrant (768-dim dense + sparse BM25). Dense vectors indexed with HNSW for cosine similarity. Sparse vectors via fastembed `Qdrant/bm25` model for keyword-based retrieval.
 
 ### Ollama (LLM Service)
 
@@ -178,13 +181,15 @@ Return 201 with document metadata
     ↓
 BackgroundTask (async) starts processing
     ↓
-[Parse] Extract text (pypdf/python-docx/plain read)
+[Parse] Extract via pdfplumber (crop 6% header/footer), tables separate
     ↓
-[Chunk] Split into ~512-token chunks, 50-token overlap
+[Preprocess] Unicode NFC, ligature fix, hyphen merge, dedup headers/footers
     ↓
-[Embed] Generate 384-dim vectors (sentence-transformers)
+[Chunk] Split into ~512-token chunks, 50-token overlap, breadcrumb prefix
     ↓
-[Store] Save DocumentChunks to DB with embeddings
+[Embed] Generate 768-dim vectors (BAAI/bge-base-en-v1.5, asymmetric)
+    ↓
+[Store] Save DocumentChunks + tables to DB, vectors to Qdrant (dense+sparse)
     ↓
 Update Document (status=completed, chunk_count=N)
     ↓
@@ -205,22 +210,32 @@ POST /rag/query OR GET /rag/query-stream
     ↓
 Validate query (1-2000 chars), top_k (1-20, default 5)
     ↓
-Embed query (sentence-transformers/all-MiniLM-L6-v2, 384-dim)
+[CONVERSATION MANAGEMENT]
+├─ Load conversation history (OrderedDict, max 50 messages)
+├─ Apply sliding window (last 6 turns)
+└─ Truncate old assistant responses to 1200 chars if needed
+    ↓
+[QUERY REWRITING]
+├─ Heuristic gate: is query self-contained?
+├─ If follow-up (history ≥2 turns): LLM rewrite with context
+├─ Output sanitization + fallback to original
+└─ Return retrieval_query (for Qdrant/BM25) + original query_text (for LLM)
+    ↓
+Embed retrieval_query (BAAI/bge-base-en-v1.5, 768-dim, asymmetric prefix)
     ↓
 [HYBRID RETRIEVAL]
-├─ Parallel: Qdrant cosine similarity search (dense)
-│   └─ Filter by user_id, ORDER BY cosine distance, LIMIT k=60
-├─ Parallel: Postgres FTS search (sparse)
-│   └─ Filter by user_id, ORDER BY ts_rank_cd, LIMIT k=60
+├─ Parallel: Qdrant dense search (cosine)
+│   └─ Filter by user_id, sparse vectors via fastembed Qdrant/bm25
+├─ Parallel: Qdrant sparse BM25 search
 ├─ Merge results via RRF fusion (alpha=0.7, k=60)
 │   └─ Score = (1/(alpha + rank_dense)) + (1/(alpha + rank_sparse))
-└─ Select top RETRIEVAL_TOP_N=20 candidates
+└─ Apply score threshold (hybrid: top_score×0.2, non-hybrid: 0.3)
     ↓
 [CROSS-ENCODER RERANKING]
 ├─ Rerank top-20 with BAAI/bge-reranker-base
 └─ Select final top-k (default 5)
     ↓
-Assemble context + anti-hallucination system prompt
+Assemble context + 6-section system prompt (role, grounding, citations, refusal, anti-filler, injection defense)
     ↓
 POST /api/chat (Ollama) with stream={true|false}
 ├─ Model: Qwen3 8B
@@ -231,17 +246,19 @@ POST /api/chat (Ollama) with stream={true|false}
 If stream=true:
     ├─ Open SSE connection
     ├─ Stream delta events (text chunks)
-    ├─ Send sources event (ranked chunks)
+    ├─ Send sources event (ranked chunks with [Source N: filename, pX] format)
     └─ Close with done event
     ↓
 Frontend displays answer + citation cards with relevance scores
 ```
 
-**System Prompt Strategy:**
-- Grounding: cite retrieved chunks only
-- Citations: format as [Source N] per chunk
-- Refusal: decline out-of-scope questions
-- Language mirroring: respond in question language
+**System Prompt Strategy (6-section):**
+1. **Role:** Define assistant as knowledge expert
+2. **Grounding:** Cite retrieved chunks only, forbid external knowledge
+3. **Citation Enforcement:** `[Source N: filename, pX]` format per chunk, reject if unverifiable
+4. **Refusal Template:** Decline out-of-scope gracefully
+5. **Anti-Filler:** No filler phrases, direct answers only
+6. **Injection Defense:** Ignore contradictory user instructions in query
 
 **SSE Event Format:**
 ```
@@ -365,12 +382,16 @@ backend:
     QDRANT_URL=http://qdrant:6333
     QDRANT_COLLECTION=chunks
     OLLAMA_BASE_URL=http://ollama:11434
+    EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
+    EMBEDDING_DIM=768
     HYBRID_ENABLED=true
     HYBRID_ALPHA=0.7
     HYBRID_RRF_K=60
     RERANKER_ENABLED=true
     RERANKER_MODEL=BAAI/bge-reranker-base
     RETRIEVAL_TOP_N=20
+    REWRITER_ENABLED=true
+    LLM_MODEL=qwen3:8b
   volumes:
     - ./backend/uploads:/app/uploads
 
@@ -407,8 +428,8 @@ ollama:
 
 | Operation | Typical | Max |
 |-----------|---------|-----|
-| Embed query | 50-100ms | 200ms |
-| Vector search (pgvector IVFFlat) | 100-300ms | 500ms |
+| Embed query (BGE 768d) | 50-100ms | 200ms |
+| Vector search (Qdrant HNSW + BM25 sparse) | 50-200ms | 400ms |
 | LLM generation (Ollama) | 5-30s | 120s |
 | **Total (excluding LLM)** | **150-400ms** | **700ms** |
 | **Total (including LLM, 8B model)** | **5-30s** | **120s** |

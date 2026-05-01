@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL: str = "qwen3:8b"
 
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-    EMBEDDING_DIM: int = 384
+    EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"
+    EMBEDDING_DIM: int = 768
     CHUNK_SIZE: int = 512
     CHUNK_OVERLAP: int = 50
 

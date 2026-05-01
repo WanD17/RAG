@@ -28,10 +28,13 @@ class EmbeddingService:
         return self._model
 
     def embed_text(self, text: str) -> list[float]:
-        embedding = self.model.encode(text, normalize_embeddings=True)
+        # BGE asymmetric: query-side prefix improves retrieval accuracy
+        prefixed = f"Represent this sentence for searching relevant passages: {text}"
+        embedding = self.model.encode(prefixed, normalize_embeddings=True)
         return embedding.tolist()
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        # Passage-side: no prefix for ingestion
         embeddings = self.model.encode(texts, normalize_embeddings=True, batch_size=32)
         return [e.tolist() for e in embeddings]
 

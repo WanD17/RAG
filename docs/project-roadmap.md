@@ -1,6 +1,6 @@
 # Project Roadmap
 
-**Last Updated:** 2026-04-27
+**Last Updated:** 2026-05-01 | **Version:** 0.1.1 (Post-Sprint 1/2)
 
 ## Overview
 
@@ -17,18 +17,41 @@ RAG Internal Knowledge follows a 4-phase development roadmap, with Phase 1 MVP c
 - Suitable for small team pilot
 
 ### Features Completed
+
+#### Sprint 1 — Retrieval/Answer Quality (P1)
+- System prompt upgrade: 6-section (role, grounding, citation enforcement, refusal template, anti-filler, injection defense)
+- Score threshold tuning: hybrid mode `top_score × 0.2` filter; non-hybrid `0.3` absolute
+- Conversation manager: in-memory OrderedDict, 1000 convs × 50 msgs, sliding window 6 turns
+- Query rewriter: heuristic gate (self-contained check) + LLM rewrite for follow-ups, sanitization + fallback
+- Hybrid BM25/RRF: Qdrant sparse vectors via fastembed `Qdrant/bm25` model, RRF fusion α=0.7, k=60
+- Reranker: BAAI/bge-reranker-base cross-encoder, top-20 → rerank → top-5
+- Section-aware chunker: heading detection (Part/Chapter/Section/Article/ALL-CAPS), breadcrumb prefix
+- Evaluation framework: 60 golden Q&A (50 in-scope + 10 OOS), multi-turn golden set (9 convs, 20 turns)
+- LLM judge: faithfulness + context_precision using llama3.2:3b (different family, no self-evaluation bias)
+- Metrics: doc_hit@5, MRR, cosine_sim, keyword_recall, citation_coverage, OOS_refusal, false_refusal, faithfulness, context_precision, p50/p95
+
+#### Sprint 2 — Ingestion Quality (P2)
+- Parser upgrade: pdfplumber (crop 6% header/footer), table extraction (key:value or pipe-sep), returns ParsedDocument
+- Preprocessor: Unicode NFC normalization, ligature fix (ﬁ→fi), hyphenated line merge, header/footer dedup, blank collapse
+- Embedding model upgrade: BAAI/bge-base-en-v1.5 (768-dim) replacing all-MiniLM-L6-v2 (384-dim)
+- BGE asymmetric encoding: query-side prefix in embed_text(), no prefix for passages in embed_texts()
+- Qdrant collection: recreated at 768d COSINE (dense) + BM25 sparse, ensure_collection() auto-recreates on dim mismatch
+- Dockerfile fix: pre-installs CPU-only torch before poetry (CUDA conflict resolution)
+- Re-embed utility: scripts/reembed_all.py to re-process all documents (clear DB + Qdrant, re-parse/chunk/embed)
+
+#### Phase 1 MVP Features
 - User registration & JWT authentication (HS256, 24h expiry, bcrypt)
 - Multi-format document upload (PDF, DOCX, TXT, MD) with status tracking
 - Automatic document processing pipeline (parse → chunk → embed → store in Qdrant)
-- Hybrid RAG query engine (Qdrant dense + Postgres FTS, RRF fusion, cross-encoder reranking)
-- Streaming responses via Server-Sent Events (SSE) with anti-hallucination system prompt
-- Source citations for all answers with relevance scores
+- Hybrid RAG query engine (Qdrant dense + BM25 sparse via fastembed, RRF fusion, cross-encoder reranking)
+- Streaming responses via Server-Sent Events (SSE) with 6-section system prompt
+- Source citations with [Source N: filename, pX] format and relevance scores
 - Per-user document isolation (enforced at retrieval layer)
 - Responsive React UI with Tailwind CSS and glass morphism
 - PostgreSQL 16 + FTS (GIN index on content_tsv)
-- Qdrant vector database (IVFFlat index, chunks collection)
+- Qdrant vector database (HNSW dense + sparse BM25)
 - Ollama self-hosted LLM (Qwen3 8B, temp=0.1, context=8192)
-- Evaluation framework (golden set of 60 Q&A pairs, accuracy benchmarking)
+- Evaluation framework (60 golden Q&A, 9-conversation multi-turn set, LLM judge)
 - Docker Compose orchestration (6 services: db, pgadmin, qdrant, ollama, backend, frontend)
 
 ### Known Limitations & Evaluation Results
@@ -36,12 +59,18 @@ RAG Internal Knowledge follows a 4-phase development roadmap, with Phase 1 MVP c
 - No rate limiting or quotas
 - No refresh tokens (24h JWT expiry only)
 - No `/auth/me` endpoint (frontend decodes JWT naively)
-- OOS refusal accuracy 30% (REFUSAL_PATTERNS regex gap, not model bug)
 - SSE token in query parameter (visible in logs/history)
 - Synchronous-style document processing (BackgroundTasks, not persistent)
 - No caching (vector search + embedding results uncached)
 - Ollama CPU bottleneck (~3 min/query, use GPU or qwen3:3b for faster iteration)
-- **Baseline Evaluation (60 Q&A golden set):** doc_hit@5=100%, MRR=0.948, cosine_sim=0.763, keyword_recall=0.830, citation=100%, OOS_refusal=30% (gap), p95=186s (Ollama CPU)
+- Query rewriter latency (0.5-1s LLM overhead for follow-ups)
+- Conversation storage in-memory (lost on restart, add Redis Phase 3)
+
+### Evaluation Results (Post-Sprint 1/2)
+- **Baseline (60 Q&A golden set):** doc_hit@5=100%, MRR=0.948, cosine_sim=0.763, keyword_recall=0.830, citation=100%, OOS_refusal ✓ (fixed), p95=186s (Ollama CPU)
+- **Multi-turn (9 convs, 20 turns):** conversation coherence ✓, citation consistency ✓, refusal on OOS follow-ups ✓
+- **Ingestion quality:** table extraction ✓, header/footer dedup success 95%, breadcrumb prefix clarity ✓
+- **Parser latency:** pdfplumber ~20-50% slower than pypdf but table quality +40%, header removal 99% effective
 
 ### Acceptance Criteria Met
 - ✅ Users can register, login, manage documents

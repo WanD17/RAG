@@ -55,15 +55,24 @@ class QdrantService:
         if exists:
             info = await self.client.get_collection(settings.QDRANT_COLLECTION)
             has_sparse = bool(info.config.params.sparse_vectors)
-            if has_sparse:
+            dense_cfg = info.config.params.vectors
+            current_dim = None
+            if isinstance(dense_cfg, dict) and "dense" in dense_cfg:
+                current_dim = dense_cfg["dense"].size
+            elif hasattr(dense_cfg, "size"):
+                current_dim = dense_cfg.size
+
+            dim_ok = current_dim == settings.EMBEDDING_DIM
+            if has_sparse and dim_ok:
                 logger.debug(
                     f"Qdrant collection '{settings.QDRANT_COLLECTION}' already exists "
-                    f"with dense + sparse vectors"
+                    f"with dense({settings.EMBEDDING_DIM}d) + sparse vectors"
                 )
                 return
+            reason = "dimension mismatch" if not dim_ok else "missing BM25 sparse vectors"
             logger.warning(
-                f"Recreating Qdrant collection '{settings.QDRANT_COLLECTION}' "
-                f"to add BM25 sparse vectors — existing data will be cleared, re-upload documents"
+                f"Recreating Qdrant collection '{settings.QDRANT_COLLECTION}' ({reason}) "
+                f"— existing data will be cleared, re-embed documents"
             )
             await self.client.delete_collection(settings.QDRANT_COLLECTION)
 

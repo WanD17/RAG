@@ -81,18 +81,21 @@ def judge_faithfulness(
 
 
 _PRECISION_PROMPT = """\
-Given a QUESTION and a list of retrieved CONTEXT CHUNKS, determine which chunks are relevant.
+Your job is to check which text chunks are useful for answering a question.
 
-A chunk is relevant if it contains information that directly helps answer the question.
+Question: {question}
 
-QUESTION: {question}
-
-CHUNKS:
+Text chunks:
 {chunks}
 
-For each chunk, output 1 if relevant, 0 if not relevant.
-Output ONLY a comma-separated list of 0s and 1s matching the chunk order.
-Example for 5 chunks: 1,0,1,0,0\
+Instructions:
+- Read each chunk carefully.
+- If a chunk directly helps answer the question, mark it 1.
+- If a chunk is unrelated or does not help, mark it 0.
+- Reply with ONLY the marks in order, separated by commas.
+- Do not explain. Do not write code. Just output the marks.
+
+Reply format example (for 5 chunks): 1,0,1,0,0\
 """
 
 _BITS_RE = re.compile(r"[01]")

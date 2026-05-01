@@ -6,6 +6,8 @@ RUN pip install --no-cache-dir poetry && \
     poetry config virtualenvs.in-project true
 
 COPY pyproject.toml poetry.lock* ./
+# Install CPU-only torch before poetry to avoid pulling CUDA wheels in slim container
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN poetry install --only main --no-interaction --no-ansi
 
 COPY . .
