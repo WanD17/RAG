@@ -1,8 +1,21 @@
 from __future__ import annotations
 
+import re
+
 import tiktoken
 
 _encoder: tiktoken.Encoding | None = None
+
+# Heading hierarchy: (level, regex). Level 0=Part, 1=Chapter, 2=Section/Title, 3=Article, 4=Subsection
+_HEADING_LEVELS: list[tuple[int, re.Pattern[str]]] = [
+    (0, re.compile(r"^(part\s+(?:[ivxlcdm]+|\d+)\b.{0,80})$", re.I)),
+    (1, re.compile(r"^(chapter\s+(?:[ivxlcdm]+|\d+)\b.{0,80})$", re.I)),
+    (2, re.compile(r"^((?:title|section)\s+(?:[ivxlcdm]+|\d[\d.]*)\b.{0,80})$", re.I)),
+    (3, re.compile(r"^(article\s+\d+\b.{0,100})$", re.I)),
+    (4, re.compile(r"^(\d+(?:\.\d+)+\.?\s+[A-Z].{0,80})$")),
+]
+# Short ALL-CAPS lines treated as level-1 headings (e.g. "GENERAL PROVISIONS")
+_ALLCAPS_RE = re.compile(r"^[A-Z][A-Z\s\-/]{3,57}[A-Z]$")
 
 
 def get_encoder() -> tiktoken.Encoding:
@@ -88,14 +101,84 @@ def _merge_splits(splits: list[str], chunk_size: int, chunk_overlap: int) -> lis
     return chunks
 
 
+def _chunk_flat(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
+    """Flat recursive chunking — used per section after structure is split out."""
+    text = text.strip()
+    if not text:
+        return []
+    if count_tokens(text) <= chunk_size:
+        return [text]
+    separators = ["\n\n", "\n", ". ", " ", ""]
+    splits = _split_recursive(text, chunk_size, 0, separators)
+    return _merge_splits(splits, chunk_size, chunk_overlap)
+
+
+def _detect_heading(line: str) -> tuple[int, str] | None:
+    """Return (level, title) if line is a structural heading, else None."""
+    if not line or len(line) < 3 or len(line) > 200:
+        return None
+    for level, pattern in _HEADING_LEVELS:
+        m = pattern.match(line)
+        if m:
+            title = m.group(1).strip()
+            return (level, title[:60] if len(title) > 60 else title)
+    if _ALLCAPS_RE.match(line):
+        return (1, line[:60])
+    return None
+
+
+def _split_into_sections(text: str) -> list[tuple[str, str]]:
+    """Split text at heading boundaries. Returns [(breadcrumb, body_text), ...]."""
+    lines = text.splitlines(keepends=True)
+    sections: list[tuple[str, str]] = []
+    crumbs: list[tuple[int, str]] = []
+    current: list[str] = []
+
+    def _flush() -> None:
+        body = "".join(current).strip()
+        if body:
+            bc = " > ".join(t for _, t in crumbs)
+            sections.append((bc, body))
+        current.clear()
+
+    for line in lines:
+        h = _detect_heading(line.strip())
+        if h is not None:
+            _flush()
+            level, title = h
+            crumbs = [(lv, t) for lv, t in crumbs if lv < level] + [(level, title)]
+        else:
+            current.append(line)
+
+    _flush()
+    return sections
+
+
 def chunk_text(text: str, chunk_size: int = 512, chunk_overlap: int = 50) -> list[str]:
+    """Section-aware chunking with heading breadcrumb prefix.
+
+    Detects structural headings (Part / Chapter / Article / numbered subsections),
+    splits the document into sections, and prepends each chunk with a breadcrumb
+    like '[Chapter I > Article 12. Criminal liability]' for retrieval signal.
+
+    Falls back to flat recursive chunking if no headings are detected.
+    """
     text = text.strip()
     if not text:
         return []
 
-    if count_tokens(text) <= chunk_size:
-        return [text]
+    sections = _split_into_sections(text)
 
-    separators = ["\n\n", "\n", ". ", " ", ""]
-    splits = _split_recursive(text, chunk_size, 0, separators)
-    return _merge_splits(splits, chunk_size, chunk_overlap)
+    # No headings found → flat chunking (backward compat for plain-text files)
+    if not sections or all(not bc for bc, _ in sections):
+        return _chunk_flat(text, chunk_size, chunk_overlap)
+
+    result: list[str] = []
+    for breadcrumb, body in sections:
+        flat = _chunk_flat(body, chunk_size, chunk_overlap)
+        if breadcrumb:
+            prefix = f"[{breadcrumb}] "
+            result.extend(prefix + c for c in flat)
+        else:
+            result.extend(flat)
+    return result
