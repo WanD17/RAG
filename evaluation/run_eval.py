@@ -5,9 +5,11 @@ deterministic metrics + latency statistics, and writes a timestamped
 JSON report to evaluation/results/.
 
 Usage:
-    python evaluation/run_eval.py                 # full run
-    python evaluation/run_eval.py --limit 10      # quick smoke test
-    python evaluation/run_eval.py --resume        # resume interrupted run
+    python evaluation/run_eval.py                          # full run
+    python evaluation/run_eval.py --limit 10               # quick smoke test
+    python evaluation/run_eval.py --resume                 # resume interrupted run
+    python evaluation/run_eval.py --llm-judge              # + faithfulness (llama3.2:3b judge)
+    python evaluation/run_eval.py --llm-judge --judge-model mistral:7b  # override judge
 """
 import argparse
 import json
@@ -157,6 +159,21 @@ def aggregate(per_sample):
 
     lat_all = get(per_sample, "latency_ms")
 
+    answer_quality = {
+        "cosine_sim_mean": mean(get(in_scope, "ans_cosine")),
+        "keyword_recall_mean": mean(get(in_scope, "keyword_recall")),
+        "citation_coverage_pct": pct(get(in_scope, "has_citation")),
+    }
+    faith_vals = [v for v in get(in_scope, "faithfulness") if v is not None]
+    if faith_vals:
+        answer_quality["faithfulness_mean"] = mean(faith_vals)
+        answer_quality["faithfulness_n"] = len(faith_vals)
+
+    prec_vals = [v for v in get(in_scope, "context_precision") if v is not None]
+    if prec_vals:
+        answer_quality["context_precision_mean"] = mean(prec_vals)
+        answer_quality["context_precision_n"] = len(prec_vals)
+
     summary = {
         "num_samples": len(per_sample),
         "num_in_scope": len(in_scope),
@@ -165,11 +182,7 @@ def aggregate(per_sample):
             "doc_hit@5_pct": pct(get(in_scope, "doc_hit@5")),
             "mrr_mean": mean(get(in_scope, "mrr")),
         },
-        "answer_quality": {
-            "cosine_sim_mean": mean(get(in_scope, "ans_cosine")),
-            "keyword_recall_mean": mean(get(in_scope, "keyword_recall")),
-            "citation_coverage_pct": pct(get(in_scope, "has_citation")),
-        },
+        "answer_quality": answer_quality,
         "behavior": {
             "oos_refusal_accuracy_pct": pct(get(oos, "refused_correctly")),
             "false_refusal_in_scope_pct": pct(get(in_scope, "false_refusal")),
@@ -200,6 +213,12 @@ def print_summary(summary, run_meta=None):
     print(f"  cosine similarity   : {summary['answer_quality']['cosine_sim_mean']}")
     print(f"  keyword recall      : {summary['answer_quality']['keyword_recall_mean']}")
     print(f"  citation coverage   : {summary['answer_quality']['citation_coverage_pct']}%")
+    if "faithfulness_mean" in summary["answer_quality"]:
+        n = summary["answer_quality"]["faithfulness_n"]
+        print(f"  faithfulness (LLM)  : {summary['answer_quality']['faithfulness_mean']} (n={n})")
+    if "context_precision_mean" in summary["answer_quality"]:
+        n = summary["answer_quality"]["context_precision_n"]
+        print(f"  ctx precision (LLM) : {summary['answer_quality']['context_precision_mean']} (n={n})")
     print("\n[Behavior]")
     print(f"  OOS refusal accuracy: {summary['behavior']['oos_refusal_accuracy_pct']}%")
     print(f"  false refusal (IS)  : {summary['behavior']['false_refusal_in_scope_pct']}%")
@@ -216,7 +235,21 @@ def main():
     ap.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
     ap.add_argument("--top-k", type=int, default=5)
     ap.add_argument("--tag", type=str, default="", help="Tag in filename (e.g. 'after-reranker')")
+    ap.add_argument("--llm-judge", action="store_true", help="Enable faithfulness scoring via LLM judge")
+    ap.add_argument("--judge-model", type=str, default="llama3.2:3b",
+                    help="Ollama model for judge (default: llama3.2:3b — different family from qwen backend)")
+    ap.add_argument("--judge-url", type=str, default="http://localhost:11434", help="Ollama URL for judge")
     args = ap.parse_args()
+
+    if args.llm_judge:
+        from llm_judge import judge_faithfulness as _judge_faith
+        from llm_judge import judge_context_precision as _judge_prec
+        judge_model = args.judge_model
+        print(f"[llm-judge] enabled — model={judge_model}, url={args.judge_url}")
+    else:
+        _judge_faith = None
+        _judge_prec = None
+        judge_model = None
 
     cfg = load_config()
     golden = json.loads(GOLDEN_FILE.read_text(encoding="utf-8"))
@@ -246,6 +279,19 @@ def main():
                   flush=True)
             result = query_backend(cfg, sample["question"], top_k=args.top_k)
             metrics = compute_metrics(sample, result, embedder, ref_emb_cache)
+
+            if _judge_faith and sample["category"] == "in_scope" and not metrics.get("false_refusal"):
+                answer = (result.get("answer") or "").strip()
+                sources = result.get("sources") or []
+                faith = _judge_faith(answer, sources, args.judge_url, judge_model)
+                if faith is not None:
+                    metrics["faithfulness"] = faith
+                prec = _judge_prec(sample["question"], sources, args.judge_url, judge_model)
+                if prec is not None:
+                    metrics["context_precision"] = prec
+                if faith is not None or prec is not None:
+                    print(f"    faithfulness={faith:.3f}  ctx_precision={prec:.3f}")
+
             per_sample.append({
                 "id": sample["id"],
                 "question": sample["question"],

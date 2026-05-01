@@ -1,6 +1,6 @@
 # RAG Evaluation
 
-Automated evaluation của backend RAG. Zero cost API, zero LLM-judge, deterministic metrics.
+Automated evaluation của backend RAG. Deterministic metrics + optional LLM judge cho faithfulness.
 
 ## File layout
 
@@ -11,6 +11,7 @@ evaluation/
 ├── upload_docs.py                # [1-time] Register + upload 13 PDFs
 ├── run_eval.py                   # Single-turn eval runner
 ├── run_multiturn_eval.py         # Multi-turn eval runner
+├── llm_judge.py                  # LLM faithfulness judge (dùng bởi run_eval.py)
 ├── update_benchmark.py           # Append single-turn result → benchmark.md
 ├── update_multiturn_benchmark.py # Append multi-turn result → multiturn_benchmark.md
 ├── compare.py                    # Diff 2 single-turn runs side-by-side
@@ -48,9 +49,16 @@ evaluation/
 | Answer | `cosine_sim` — sim với reference answer | > 0.6 |
 | Answer | `keyword_recall` — required keywords trong answer | > 0.5 |
 | Answer | `citation_coverage` — answer có cite source | > 80% |
+| Answer | `faithfulness` — LLM judge, optional | > 0.8 |
+| Retrieval | `context_precision` — LLM judge, optional | > 0.7 |
 | Behavior | `OOS_refusal_accuracy` — OOS refused đúng | > 70% |
 | Behavior | `false_refusal` — in-scope refused nhầm | < 10% |
 | Latency | `p50 / p95 ms` | p95 < 10s |
+
+**Faithfulness** đo hallucination: answer có chứa claim không có trong retrieved context không.
+Khác `cosine_sim` — cosine_sim đo similarity với reference answer, không phát hiện được hallucination.
+
+**Context Precision** đo noise trong retrieval: trong top-k chunks retrieve được, bao nhiêu % thực sự cần thiết để trả lời câu hỏi. Thấp → retriever đang kéo về nhiều chunks thừa → tăng nhiễu cho LLM.
 
 ---
 
@@ -88,12 +96,13 @@ evaluation/
    curl http://localhost:8000/health
    ```
 
-2. **LLM model đã pull**:
+2. **LLM models đã pull**:
    ```bash
+   # Backend model
    docker compose exec ollama ollama pull qwen3:8b
-   # CPU chậm? Switch model nhẹ hơn:
-   # docker compose exec ollama ollama pull qwen2.5:3b
-   # Edit backend/.env: LLM_MODEL=qwen2.5:3b && docker compose restart backend
+
+   # Judge model (nếu dùng --llm-judge) — khác family để tránh self-evaluation bias
+   docker compose exec ollama ollama pull llama3.2:3b
    ```
 
 3. **Python deps**:
@@ -122,15 +131,19 @@ python evaluation/run_eval.py --limit 5 --tag smoke
 ### Step 3 — Full eval
 
 ```bash
+# Deterministic metrics only (nhanh)
 python evaluation/run_eval.py --tag baseline
+
+# Với faithfulness judge (llama3.2:3b, chậm hơn ~20%)
+python evaluation/run_eval.py --tag baseline --llm-judge
 ```
 
 **Thời gian** (CPU only, 60 samples):
 
-| LLM | Ước tính |
-|-----|:---:|
-| qwen2.5:3b | 30-60 phút |
-| qwen3:8b | 3-6 giờ |
+| LLM | Không judge | Có judge (`llama3.2:3b`) |
+|-----|:-----------:|:------------------------:|
+| qwen2.5:3b | 30-60 phút | +10-15 phút |
+| qwen3:8b | 3-6 giờ | +30-60 phút |
 
 **Interrupt-safe** — Ctrl+C bất cứ lúc nào, resume:
 ```bash
@@ -158,13 +171,37 @@ python evaluation/compare.py results/20260423-baseline.json results/20260427-aft
 
 ---
 
+## LLM Judge — Faithfulness Scoring
+
+### Cách hoạt động
+
+`llm_judge.py` gọi Ollama với prompt yêu cầu chấm điểm 0.0-1.0:
+- **1.0** — mọi claim trong answer đều có trong retrieved context
+- **0.5** — một số claim được suy diễn ngoài context
+- **0.0** — answer chứa thông tin không có trong context (hallucination)
+
+Judge dùng `num_predict=16` (chỉ cần output 1 số) → nhanh hơn nhiều so với generate answer.
+
+### Tại sao phải dùng model khác
+
+Default judge: **`llama3.2:3b`** (Meta) — khác family với backend `qwen3:8b` (Alibaba).
+
+Nếu dùng cùng model, model sẽ tự cho điểm cao hơn thực tế (**self-evaluation bias** ~0.1-0.2).
+
+Override nếu cần:
+```bash
+python evaluation/run_eval.py --llm-judge --judge-model mistral:7b --tag "with-judge"
+```
+
+---
+
 ## Multi-turn workflow
 
 ### Run + update
 
 ```bash
-python evaluation/run_multiturn_eval.py --tag "no-rewriter"
-python evaluation/update_multiturn_benchmark.py --note "baseline trước query rewriter"
+python evaluation/run_multiturn_eval.py --tag "with-rewriter"
+python evaluation/update_multiturn_benchmark.py --note "after query rewriter"
 ```
 
 Smoke test (3 conversations đầu):
@@ -174,22 +211,18 @@ python evaluation/run_multiturn_eval.py --limit 3 --tag smoke
 
 Không có `--resume` — mỗi conversation chỉ 2-3 turns, chạy nhanh.
 
-### Planned runs
-
-```
-no-rewriter   → baseline (ellip_hit@5 dự kiến thấp vì chưa có query rewriter)
-with-rewriter → sau khi implement query rewriter → so sánh delta
-```
-
 ---
 
 ## One-liners
 
 ```bash
-# Single-turn eval + update benchmark
+# Single-turn (nhanh)
 python evaluation/run_eval.py --tag foo && python evaluation/update_benchmark.py --note "foo"
 
-# Multi-turn eval + update benchmark
+# Single-turn + judge
+python evaluation/run_eval.py --tag foo --llm-judge && python evaluation/update_benchmark.py --note "foo + judge"
+
+# Multi-turn
 python evaluation/run_multiturn_eval.py --tag foo && python evaluation/update_multiturn_benchmark.py --note "foo"
 ```
 
@@ -205,6 +238,8 @@ python evaluation/run_multiturn_eval.py --tag foo && python evaluation/update_mu
 | `citation_coverage < 60%` | 🔴 System prompt citation rule |
 | `doc_hit@5 < 60%` | 🟡 Reranker / BM25 hybrid / embed model |
 | `cosine_sim < 0.5` nhưng `doc_hit@5 > 70%` | 🟡 Prompt engineering |
+| `faithfulness < 0.7` | 🟡 Hallucination — tăng grounding trong system prompt |
+| `context_precision < 0.5` | 🟡 Retrieval noisy — tăng score threshold hoặc giảm top_k |
 | `false_refusal > 15%` | 🟡 Relax refusal criteria |
 | `p95 > 15s` | 🟡 Giảm num_predict hoặc switch model nhỏ |
 
@@ -274,6 +309,9 @@ python evaluation/run_multiturn_eval.py --tag foo && python evaluation/update_mu
 
 **`Ollama timeout`**
 → `docker compose logs ollama`. Giảm `num_predict` trong `backend/src/rag/generator.py` xuống 512 hoặc switch model nhỏ.
+
+**`[judge error] ...`**
+→ `llama3.2:3b` chưa được pull. Chạy: `docker compose exec ollama ollama pull llama3.2:3b`
 
 **`sentence-transformers download slow`**
 → Pre-cache: `python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"`
