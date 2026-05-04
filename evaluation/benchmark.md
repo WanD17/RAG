@@ -13,6 +13,8 @@ Lịch sử đánh giá hệ thống trên 60 golden samples (50 in-scope + 10 O
 | `cite` | % answer có citation | > 80% | ✓ |
 | `OOS_ref` | % OOS refused đúng | > 70% | ✓ |
 | `false_ref` | % IS refused nhầm | < 10% | ✗ |
+| `faith` | Faithfulness — LLM judge (llama3.2:3b), 0.0-1.0 | > 0.8 | ✓ |
+| `ctx_prec` | Context precision — % chunks retrieved thực sự cần thiết | > 0.7 | ✓ |
 | `p50/p95 ms` | Latency percentiles | p95 < 10000 | ✗ |
 
 ---
@@ -21,12 +23,13 @@ Lịch sử đánh giá hệ thống trên 60 golden samples (50 in-scope + 10 O
 
 Latest on top.
 
-| Date | Tag | N | doc_hit@5 | MRR | cos_sim | kw_rec | cite | OOS_ref | false_ref | p50 ms | p95 ms | Notes |
-|------|-----|:-:|:---------:|:---:|:-------:|:------:|:----:|:-------:|:---------:|:------:|:------:|-------|
-| 2026-04-30 19:39 | **RRF + score threshold + chunkerv2** | 60 | 100.0% | 0.948 | 0.801 | 0.860 | 100.0% | 100.0%✓ | 0.0% | 100,284 | 150,029 | RRF + score threshold + chunkerv2; OOS_ref corrected after regex fix |
-| 2026-04-27 16:56 | **bm25+qdrant+propmt_eng+reranker** | 60 | 98.0% | 0.953 | 0.795 | 0.830 | 100.0% | 10.0% | 0.0% | 172,315 | 227,391 | bm25+qdrant+propmt_eng+reranker |
-| 2026-04-23 16:26 | **baseline** | 60 | 100.0% | 0.948 | 0.763 | 0.830 | 100.0% | 30.0%⚠ | 0.0% | 146707 | 186728 | qwen3:8b CPU, pgvector cosine, no reranker |
-| 2026-04-23 13:50 | smoke | 5 | 100.0% | 0.867 | 0.718 | 0.700 | 100.0% | — | 0.0% | 149641 | 161056 | Smoke test, 5 IS samples |
+| Date | Tag | N | doc_hit@5 | MRR | cos_sim | kw_rec | cite | OOS_ref | false_ref | faith | ctx_prec | p50 ms | p95 ms | Notes |
+|------|-----|:-:|:---------:|:---:|:-------:|:------:|:----:|:-------:|:---------:|:-----:|:--------:|:------:|:------:|-------|
+| 2026-05-01 20:20 | **bge-base-en-v1.5 768d + asymmetric prefix + pdfplumber + section-aware chunker** | 60 | 100.0% | 0.990 | 0.791 | 0.900 | 100.0% | 100.0% | 0.0% | 0.794 | 0.440 | 70,708 | 108,051 | bge-base-en-v1.5 768d + asymmetric prefix + pdfplumber + section-aware chunker + llm-judge (n=50) |
+| 2026-04-30 19:39 | **RRF + score threshold + chunkerv2** | 60 | 100.0% | 0.948 | 0.801 | 0.860 | 100.0% | 100.0%✓ | 0.0% | — | — | 100,284 | 150,029 | RRF + score threshold + chunkerv2; OOS_ref corrected after regex fix |
+| 2026-04-27 16:56 | **bm25+qdrant+propmt_eng+reranker** | 60 | 98.0% | 0.953 | 0.795 | 0.830 | 100.0% | 10.0% | 0.0% | — | — | 172,315 | 227,391 | bm25+qdrant+propmt_eng+reranker |
+| 2026-04-23 16:26 | **baseline** | 60 | 100.0% | 0.948 | 0.763 | 0.830 | 100.0% | 30.0%⚠ | 0.0% | — | — | 146,707 | 186,728 | qwen3:8b CPU, pgvector cosine, no reranker |
+| 2026-04-23 13:50 | smoke | 5 | 100.0% | 0.867 | 0.718 | 0.700 | 100.0% | — | 0.0% | — | — | 149,641 | 161,056 | Smoke test, 5 IS samples |
 
 ⚠ = metric bị ảnh hưởng bởi regex gap, xem phần diagnosis bên dưới.
 

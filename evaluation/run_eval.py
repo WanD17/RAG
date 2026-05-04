@@ -61,6 +61,20 @@ def cosine(a, b) -> float:
     return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
 
 
+def refresh_token(cfg: dict) -> None:
+    """Re-login and update cfg['token'] + .config.json in-place."""
+    email = cfg.get("email", "")
+    password = cfg.get("password", "")
+    if not email or not password:
+        raise RuntimeError("No credentials in .config.json — re-run upload_docs.py")
+    r = httpx.post(f"{cfg['backend']}/auth/login",
+                   json={"email": email, "password": password}, timeout=30)
+    r.raise_for_status()
+    cfg["token"] = r.json()["access_token"]
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    print("    [auth] token refreshed")
+
+
 def query_backend(cfg, question: str, top_k: int = 5, timeout: int = 300) -> dict:
     t0 = time.perf_counter()
     r = httpx.post(
@@ -69,6 +83,14 @@ def query_backend(cfg, question: str, top_k: int = 5, timeout: int = 300) -> dic
         headers={"Authorization": f"Bearer {cfg['token']}"},
         timeout=timeout,
     )
+    if r.status_code == 401:
+        refresh_token(cfg)
+        r = httpx.post(
+            f"{cfg['backend']}/rag/query",
+            json={"query": question, "top_k": top_k},
+            headers={"Authorization": f"Bearer {cfg['token']}"},
+            timeout=timeout,
+        )
     latency_ms = (time.perf_counter() - t0) * 1000
     r.raise_for_status()
     data = r.json()

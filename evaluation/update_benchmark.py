@@ -16,8 +16,8 @@ from pathlib import Path
 RESULTS_DIR = Path(__file__).parent / "results"
 BENCHMARK_FILE = Path(__file__).parent / "benchmark.md"
 
-TABLE_HEADER = "| Date | Tag | N | doc_hit@5 | MRR | cos_sim | kw_rec | cite | OOS_ref | false_ref | p50 ms | p95 ms | Notes |"
-ROW_SEPARATOR = "|------|-----|:-:|:---------:|:---:|:-------:|:------:|:----:|:-------:|:---------:|:------:|:------:|-------|"
+TABLE_HEADER = "| Date | Tag | N | doc_hit@5 | MRR | cos_sim | kw_rec | cite | OOS_ref | false_ref | faith | ctx_prec | p50 ms | p95 ms | Notes |"
+ROW_SEPARATOR = "|------|-----|:-:|:---------:|:---:|:-------:|:------:|:----:|:-------:|:---------:|:-----:|:--------:|:------:|:------:|-------|"
 
 
 def pick_result_file(arg: str | None) -> Path:
@@ -59,6 +59,8 @@ def build_row(data: dict, note: str) -> str:
     false_r = _get(s, "behavior", "false_refusal_in_scope_pct")
     p50 = _get(s, "latency_ms", "p50")
     p95 = _get(s, "latency_ms", "p95")
+    faith = _get(s, "answer_quality", "faithfulness_mean")
+    ctx_prec = _get(s, "answer_quality", "context_precision_mean")
 
     def pct(v): return f"{v:.1f}%" if v is not None else "—"
     def num(v): return f"{v:.3f}" if v is not None else "—"
@@ -67,7 +69,7 @@ def build_row(data: dict, note: str) -> str:
     return (
         f"| {ts} | **{tag}** | {n} | {pct(hit5)} | {num(mrr)} | {num(cos)} | "
         f"{num(kw)} | {pct(cite)} | {pct(oos)} | {pct(false_r)} | "
-        f"{ms(p50)} | {ms(p95)} | {note} |"
+        f"{num(faith)} | {num(ctx_prec)} | {ms(p50)} | {ms(p95)} | {note} |"
     )
 
 

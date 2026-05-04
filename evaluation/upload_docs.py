@@ -121,7 +121,7 @@ def main():
 
     final = list_existing_docs(token)
     CONFIG_FILE.write_text(json.dumps({
-        "token": token, "email": EMAIL, "backend": BACKEND,
+        "token": token, "email": EMAIL, "password": PASSWORD, "backend": BACKEND,
         "documents": final,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[done] {len(final)} docs ready. Config saved to {CONFIG_FILE}")

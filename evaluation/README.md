@@ -153,7 +153,7 @@ python evaluation/run_eval.py --resume --tag baseline
 ### Step 4 — Update benchmark
 
 ```bash
-python evaluation/update_benchmark.py --note "baseline, no reranker"
+python evaluation/update_benchmark.py --note "bge-base-en-v1.5 768d + asymmetric prefix + pdfplumber + section-aware chunker" "baseline, no reranker"
 ```
 
 Auto-detect file JSON mới nhất. Idempotent — chạy lại không duplicate.
