@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     RERANKER_ENABLED: bool = True
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
+    RERANKER_SCORE_THRESHOLD: float = 0.6  # drop chunks with sigmoid rerank score below this; logit≈0 maps to 0.5 so 0.6 actually filters irrelevant chunks
     RETRIEVAL_TOP_N: int = 20
 
     REWRITER_ENABLED: bool = True

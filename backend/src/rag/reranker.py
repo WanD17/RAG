@@ -57,7 +57,11 @@ class RerankerService:
             chunk.similarity_score = _sigmoid(float(raw))
 
         chunks.sort(key=lambda c: c.similarity_score, reverse=True)
-        return chunks[:top_k]
+        top = chunks[:top_k]
+        threshold = settings.RERANKER_SCORE_THRESHOLD
+        filtered = [c for c in top if c.similarity_score >= threshold]
+        # keep at least 1 chunk even if all below threshold
+        return filtered if filtered else top[:1]
 
 
 reranker_service = RerankerService()

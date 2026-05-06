@@ -84,7 +84,7 @@ async def generate_answer(
                     "messages": messages,
                     "stream": False,
                     "think": False,
-                    "options": {"num_predict": 512, "num_ctx": 8192, "temperature": 0.1},
+                    "options": {"num_predict": 512, "num_ctx": 8192, "temperature": 0, "presence_penalty": 0.2},
                 },
             )
             response.raise_for_status()
@@ -115,7 +115,8 @@ async def generate_answer_stream(
                     "options": {
                         "num_predict": 512,
                         "num_ctx": 8192,
-                        "temperature": 0.1,
+                        "temperature": 0,
+                        "presence_penalty": 0.2,
                     },
                 },
             ) as response:
