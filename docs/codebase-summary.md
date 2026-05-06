@@ -1,6 +1,6 @@
 # Codebase Summary
 
-**Last Updated:** 2026-05-01 | **Project Version:** 0.1.1 (Post-Sprint 1/2)
+**Last Updated:** 2026-05-06 | **Project Version:** 0.1.1 (Post-Sprint 2)
 
 ## Overview
 
@@ -260,6 +260,29 @@ CREATE INDEX ix_document_chunks_content_tsv ON document_chunks USING gin(content
 12. **HTTPS not enforced** — no TLS in Docker compose; use reverse proxy production
 13. **Query rewriter latency** — LLM rewrite adds 0.5-1s for follow-up queries; consider caching Phase 3
 14. **Conversation storage** — in-memory OrderedDict lost on restart; add Redis backing Phase 3
+
+## Sprint 3 — Production Hardening (Planned, Next)
+
+Next phase focuses on resilience, observability, and graceful error handling:
+
+- **Circuit breaker for Ollama** — 5 consecutive failures → OPEN (30s) → HALF_OPEN → 3 successes → CLOSED
+- **Retry + exponential backoff** — max 2 retries via `tenacity` library
+- **Asyncio Semaphore** — max concurrent LLM requests (limit connection pool contention)
+- **Correlation ID middleware** — X-Request-ID header + contextvar + echo in responses
+- **Structured JSON logging** — loguru JSON mode when `LOG_FORMAT=json`
+- **Exception hierarchy** — RAGException → 7 subclasses → proper HTTP status codes
+- **Redis cache** — embedding/query results, MD5 key, TTL 3600s, graceful fallback when down
+- **LLM parameter: frequency_penalty** — add to presence_penalty=0.2 for further diversity
+
+**Benchmark Post-Sprint 2 (2026-05-01):**
+- **Accuracy (60 Q&A golden set):** doc_hit@5=100%, MRR=0.990, kw_recall=0.900, citation=100%
+- **Performance:** p95=108s (down from 186s, due to optimized embedding batch_size=32 + reranking)
+- **Multi-turn:** conversation coherence ✓, citation consistency ✓, refusal on OOS follow-ups ✓
+
+**Key utility scripts:**
+- `scripts/reembed_all.py` — re-embed all documents when changing embedding model (clear DB + Qdrant, re-parse/chunk/embed)
+- `scripts/run_eval.py` — evaluate against golden set (60 Q&A + multi-turn), compute metrics
+- `scripts/compare.py` — compare evaluation runs (before/after changes)
 
 ## Dependencies Graph
 

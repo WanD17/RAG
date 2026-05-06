@@ -1,6 +1,6 @@
 # Code Standards & Conventions
 
-**Last Updated:** 2026-04-27
+**Last Updated:** 2026-05-06
 
 ## General Principles
 
@@ -45,15 +45,18 @@
 - pgvector 0.3.0 — vector database support
 
 **Processing:**
-- sentence-transformers 3.0 — embeddings
-- tiktoken 0.7.0 — token counting for chunking
-- pypdf 4.2.0 — PDF parsing
+- sentence-transformers 3.0 — BAAI/bge-base-en-v1.5 embeddings (768-dim, asymmetric query prefix)
+- fastembed — Qdrant/bm25 sparse vectors for hybrid retrieval
+- BAAI/bge-reranker-base — cross-encoder re-ranking (via httpx async call)
+- tiktoken 0.7.0 — token counting for chunking (cl100k_base)
+- pdfplumber — PDF parsing with header/footer crop + table extraction
 - python-docx 1.1.0 — DOCX parsing
 
-**Auth:**
-- python-jose 3.3.0 — JWT tokens
-- passlib 1.7.4 — password hashing
-- bcrypt — bcrypt algorithm
+**Auth & HTTP:**
+- python-jose 3.3.0 — JWT tokens (HS256, 24h expiry)
+- passlib 1.7.4 — password hashing (bcrypt, cost=12)
+- httpx 0.27.0 — async HTTP client (Ollama, reranker, 300s timeout)
+- qdrant-client — async Qdrant vector DB client (HNSW + sparse BM25)
 
 **Testing:**
 - pytest 8.2.0

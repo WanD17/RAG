@@ -1,6 +1,6 @@
 # System Architecture
 
-**Last Updated:** 2026-05-01 | **Version:** 0.1.1 (Post-Sprint 1/2)
+**Last Updated:** 2026-05-06 | **Version:** 0.1.1 (Post-Sprint 2)
 
 ## High-Level Overview
 
@@ -148,8 +148,8 @@ LIMIT 20;  -- top results for RRF fusion
 **Config:**
 - Base URL: `OLLAMA_BASE_URL` (default `http://ollama:11434` in Docker, `localhost:11434` locally)
 - Model: `LLM_MODEL` (default `qwen3:8b`, configurable)
-- Inference params: `num_predict=1024` (max tokens), `temp=0.1` (low randomness), `num_ctx=8192` (context window)
-- Timeout: 120s non-streaming, 300s streaming
+- Inference params: `num_predict=512` (max tokens), `temperature=0` (deterministic), `presence_penalty=0.2`, `num_ctx=8192` (context window)
+- Timeout: 300s (both streaming and non-streaming)
 
 **API Call:**
 ```bash
@@ -158,7 +158,8 @@ curl http://ollama:11434/api/chat \
     "model": "qwen3:8b",
     "messages": [{"role": "user", "content": "context...\n\nquestion..."}],
     "stream": true,
-    "options": {"num_predict": 1024, "num_ctx": 8192, "temperature": 0.1}
+    "think": false,
+    "options": {"num_predict": 512, "num_ctx": 8192, "temperature": 0, "presence_penalty": 0.2}
   }'
 ```
 
@@ -239,7 +240,9 @@ Assemble context + 6-section system prompt (role, grounding, citations, refusal,
     ↓
 POST /api/chat (Ollama) with stream={true|false}
 ├─ Model: Qwen3 8B
-├─ Temperature: 0.1 (low randomness)
+├─ Temperature: 0 (deterministic)
+├─ Presence penalty: 0.2 (reduce token repetition)
+├─ Think: false (suppress chain-of-thought)
 ├─ Context window: 8192 tokens
 └─ Max generation: 512 tokens
     ↓
@@ -430,9 +433,9 @@ ollama:
 |-----------|---------|-----|
 | Embed query (BGE 768d) | 50-100ms | 200ms |
 | Vector search (Qdrant HNSW + BM25 sparse) | 50-200ms | 400ms |
-| LLM generation (Ollama) | 5-30s | 120s |
+| LLM generation (Ollama) | 5-30s | 300s |
 | **Total (excluding LLM)** | **150-400ms** | **700ms** |
-| **Total (including LLM, 8B model)** | **5-30s** | **120s** |
+| **Total (including LLM, 8B model)** | **5-30s** | **300s** |
 
 **Bottleneck:** LLM generation (Ollama), not retrieval.
 

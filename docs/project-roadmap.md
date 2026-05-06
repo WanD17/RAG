@@ -1,6 +1,6 @@
 # Project Roadmap
 
-**Last Updated:** 2026-05-01 | **Version:** 0.1.1 (Post-Sprint 1/2)
+**Last Updated:** 2026-05-06 | **Version:** 0.1.1 (Post-Sprint 2)
 
 ## Overview
 
@@ -66,11 +66,12 @@ RAG Internal Knowledge follows a 4-phase development roadmap, with Phase 1 MVP c
 - Query rewriter latency (0.5-1s LLM overhead for follow-ups)
 - Conversation storage in-memory (lost on restart, add Redis Phase 3)
 
-### Evaluation Results (Post-Sprint 1/2)
-- **Baseline (60 Q&A golden set):** doc_hit@5=100%, MRR=0.948, cosine_sim=0.763, keyword_recall=0.830, citation=100%, OOS_refusal ✓ (fixed), p95=186s (Ollama CPU)
+### Evaluation Results (Post-Sprint 2)
+- **Baseline (60 Q&A golden set):** doc_hit@5=100%, MRR=0.990, keyword_recall=0.900, citation=100%, OOS_refusal ✓, p95=108s (optimized embedding batch_size=32, reranking top-20 → top-5)
 - **Multi-turn (9 convs, 20 turns):** conversation coherence ✓, citation consistency ✓, refusal on OOS follow-ups ✓
 - **Ingestion quality:** table extraction ✓, header/footer dedup success 95%, breadcrumb prefix clarity ✓
 - **Parser latency:** pdfplumber ~20-50% slower than pypdf but table quality +40%, header removal 99% effective
+- **Embedding model upgrade impact:** BAAI/bge-base-en-v1.5 (768-dim) + asymmetric encoding (query prefix) drives 0.042 MRR improvement over all-MiniLM-L6-v2
 
 ### Acceptance Criteria Met
 - ✅ Users can register, login, manage documents
@@ -79,6 +80,49 @@ RAG Internal Knowledge follows a 4-phase development roadmap, with Phase 1 MVP c
 - ✅ Responses include relevant source citations
 - ✅ Fully containerized and self-hosted
 - ✅ No external API dependencies
+
+## Sprint 3: Production Hardening (Next — within Phase 1 Continuation)
+
+**Status:** 🔲 Planned | **Duration:** ~2-3 weeks | **Priority:** Critical | **Team:** 1 engineer
+
+### Goals
+- Ensure reliability under load
+- Add observability for debugging and monitoring
+- Implement fault tolerance patterns (circuit breaker, retry, backoff)
+- Gracefully handle Ollama/external service failures
+
+### Features Planned
+
+#### Resilience & Fault Tolerance
+- [ ] Circuit breaker for Ollama (5 failures → OPEN 30s → HALF_OPEN → 3 successes → CLOSED)
+- [ ] Retry + exponential backoff via `tenacity` (max 2 retries)
+- [ ] Asyncio Semaphore for max concurrent LLM requests (limit connection pool)
+- [ ] Graceful degradation when Redis is unavailable (fallback to no cache)
+- [ ] Health check improvements (database, Ollama, Qdrant, Redis connectivity)
+
+#### Observability
+- [ ] Correlation ID middleware (X-Request-ID header + contextvar + response echo)
+- [ ] Structured JSON logging (loguru JSON mode when `LOG_FORMAT=json`)
+- [ ] Request/response timing logs (embedding, retrieval, generation latency)
+- [ ] Error tracking with stack traces (RAGException hierarchy)
+
+#### Exception Handling
+- [ ] Exception hierarchy: RAGException → 7 subclasses (EmbeddingError, RetrievalError, GenerationError, etc.)
+- [ ] HTTP status code mapping (4xx for client errors, 5xx for server errors)
+- [ ] User-friendly error messages (no stack traces in API responses)
+
+#### Performance Improvements
+- [ ] Redis cache layer (embedding results, query results, MD5 key, TTL 3600s)
+- [ ] LLM parameter: `frequency_penalty=0.3` (addition to `presence_penalty=0.2`)
+- [ ] Connection pooling optimization for Qdrant, Ollama, PostgreSQL
+
+### Success Criteria
+- Zero downtime from Ollama failures (auto-retry + circuit breaker)
+- <50ms overhead per request from correlation ID + structured logging
+- 100% of API errors return structured JSON with correlation ID
+- Observable latency for all critical paths (embed, retrieve, generate, rerank)
+
+---
 
 ## Phase 2: Hardening (Planned — v0.2.0)
 
