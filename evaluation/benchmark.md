@@ -25,6 +25,7 @@ Latest on top.
 
 | Date | Tag | N | doc_hit@5 | MRR | cos_sim | kw_rec | cite | OOS_ref | false_ref | faith | ctx_prec | p50 ms | p95 ms | Notes |
 |------|-----|:-:|:---------:|:---:|:-------:|:------:|:----:|:-------:|:---------:|:-----:|:--------:|:------:|:------:|-------|
+| 2026-05-05 13:08 | **config reranker thresh and none temperature** | 60 | 100.0% | 0.990 | 0.787 | 0.820 | 100.0% | 100.0% | 2.0% | 0.800 | 0.734 | 40,944 | 91,495 | config reranker thresh and none temperature |
 | 2026-05-01 20:20 | **bge-base-en-v1.5 768d + asymmetric prefix + pdfplumber + section-aware chunker** | 60 | 100.0% | 0.990 | 0.791 | 0.900 | 100.0% | 100.0% | 0.0% | 0.794 | 0.440 | 70,708 | 108,051 | bge-base-en-v1.5 768d + asymmetric prefix + pdfplumber + section-aware chunker + llm-judge (n=50) |
 | 2026-04-30 19:39 | **RRF + score threshold + chunkerv2** | 60 | 100.0% | 0.948 | 0.801 | 0.860 | 100.0% | 100.0%✓ | 0.0% | — | — | 100,284 | 150,029 | RRF + score threshold + chunkerv2; OOS_ref corrected after regex fix |
 | 2026-04-27 16:56 | **bm25+qdrant+propmt_eng+reranker** | 60 | 98.0% | 0.953 | 0.795 | 0.830 | 100.0% | 10.0% | 0.0% | — | — | 172,315 | 227,391 | bm25+qdrant+propmt_eng+reranker |
